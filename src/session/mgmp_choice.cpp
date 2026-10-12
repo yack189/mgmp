@@ -378,7 +378,15 @@ uint64_t level_subject(const void* screen) {
 
 // Does THIS peer pick this level-up? The cat's owner does (mgmp_party). A cat
 // the table does not know falls back to the old rule -- the host picks.
+// A level-up bought in a shop (a LevelUp item, Shop::ObtainItem type 12) opens
+// on the one peer that bought it and nowhere else -- the other player is still
+// browsing. Nobody could answer it from the other side, so whoever has the
+// screen picks, and the cat travels to the other peer with the next per-node
+// cat push like any other change the host makes.
+bool shop_level_up() { return follow_here_type() == 12; }
+
 bool level_is_mine(const void* screen) {
+    if (shop_level_up()) return true;
     const uint64_t id = level_subject(screen);
     const uint8_t who = id ? party_owner(id) : kNoPeer;
     if (who == kNoPeer) return !g.is_client;
@@ -683,6 +691,12 @@ bool choice_on_level_select(void* screen, void* opt) {
         return true;
     }
 
+    if (shop_level_up()) {
+        log_line("CHOICE", "level-up from a shop purchase -- picked here, not sent (the"
+                           " other player has no such screen)");
+        return true;
+    }
+
     ChoiceMsg m{};
     m.kind  = kChoiceLevelUp;
     m.index = found;
@@ -706,6 +720,7 @@ void choice_on_level_update(void* level_screen) {
     // Either role may be waiting for the other's pick now: the owner of the
     // cat decides, and that can be the client.
     if (!g.pending[kChoiceLevelUp]) return;
+    if (shop_level_up()) return;          // this screen is nobody else's to answer
 
     // select_option no-ops once LevelUpScreen+792 is set, so injecting into a
     // screen that already committed would be swallowed by the GAME rather than

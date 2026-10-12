@@ -14,6 +14,7 @@
 
 #include <windows.h>
 #include <cmath>
+#include <limits>
 #include <cstring>
 
 namespace mgmp {
@@ -127,6 +128,7 @@ struct CatTarget {
     uint8_t   injected_pose = 0xFF;
     ULONGLONG injected_at = 0;
     uint8_t   area_tried = 0xFE;        // the last area index we tried to apply
+    ULONGLONG area_at = 0;
 };
 
 struct State {
@@ -671,14 +673,22 @@ void house_on_grab(uint8_t from, const HouseGrabMsg& m) {
     if (CatTarget* t = tgt_find(m.id, false)) t->area_tried = 0xFE;
 }
 
-// The HouseCat::update detour asks this first. False = do not run the cat's
-// own tick: the other player is driving it, so show their picture instead.
-bool house_cat_update(void* hc) {
-    if (!hc) return true;
+// The HouseCat::update detour, before the original. The cat's own tick RUNS on
+// a mirrored cat too: everything it draws from the cat's own data -- the hunger
+// icon (*(hc+0x60)+0x51 from CatData+0xBF8), the dead pose (CatData+0x7AC), the
+// name tag, the box's clip rectangle (*(hc+0x78)+0x38) -- is computed there and
+// nowhere else, and skipping it left mirrored cats standing, unclipped and
+// without icons. What it would decide for itself is overruled afterwards
+// (house_cat_post): its physics does not run, its own animation changes are
+// refused, and the other player's picture is written over it.
+bool house_cat_update(void*) { return true; }
+
+void house_cat_post(void* hc) {
+    if (!hc) return;
     uint64_t id = 0;
-    if (!mem_read((const uint8_t*)hc + kHC_Id, &id, sizeof(id)) || !id) return true;
+    if (!mem_read((const uint8_t*)hc + kHC_Id, &id, sizeof(id)) || !id) return;
     CatTarget* t = puppet_target(id);
-    if (!t) return true;
+    if (!t) return;
 
     // Frame time for the smoother -- measured once a frame by the house tick,
     // NOT here: this runs once per cat, and the second cat would see a dt of
@@ -721,10 +731,16 @@ bool house_cat_update(void* hc) {
         const bool differs = strcmp(cur, st.anim) != 0 || cur_pose != (int32_t)st.pose;
         const bool fresh = strcmp(t->injected, st.anim) != 0 || t->injected_pose != st.pose;
         const ULONGLONG now = GetTickCount64();
-        const size_t len = strlen(st.anim);
-        if (differs && len && len <= 15 && (fresh || now - t->injected_at > 1000)) {
+        // A house cat's animations are almost all "_DEFAULT" + a pose number,
+        // and the setter stores _DEFAULT as the animator's default name at
+        // +0xB8 -- which is EMPTY on a house cat. So the name read back is ""
+        // and the pose is the whole animation. An empty name is sent as
+        // "_DEFAULT", or no pose change was ever mirrored at all.
+        const char* nm = st.anim[0] ? st.anim : "_DEFAULT";
+        const size_t len = strlen(nm);
+        if (differs && len <= 15 && (fresh || now - t->injected_at > 1000)) {
             struct { char buf[16]; uint64_t size, cap; } s{};
-            memcpy(s.buf, st.anim, len);
+            memcpy(s.buf, nm, len);
             s.size = len; s.cap = 15;
             g.anim_injecting = true;
             g.anim_set(an, (int)st.pose, &s);
@@ -735,10 +751,34 @@ bool house_cat_update(void* hc) {
         }
     }
 
-    // Which box or bed it is in. Tried once per change: the area's own accept
-    // check can refuse, and asking again every frame would not change its mind.
-    if (st.area != t->area_tried) {
+    // Carried by the other player: what the cat's own tick does for a cat THIS
+    // player's hand holds (HouseCat::update @ 0x1401FD3xx): the animator's
+    // carried flag, and a clip rectangle opened to infinity so no box cuts it.
+    if (st.held) {
+        if (an) { const uint8_t one = 1; mem_write((uint8_t*)an + 0xB0, &one, 1); }
+        const uint8_t one = 1;
+        mem_write((uint8_t*)hc + 0xDB, &one, 1);
+        void* clipc = nullptr; void* clip = nullptr;
+        if (mem_read((const uint8_t*)hc + 0x78, &clipc, sizeof(clipc)) && clipc &&
+            mem_read((const uint8_t*)clipc + 0x38, &clip, sizeof(clip)) && clip) {
+            const double inf = std::numeric_limits<double>::infinity();
+            const double r[4] = { -inf, inf, -inf, inf };
+            const int32_t zero = 0;
+            mem_write((uint8_t*)clip + 0x80, r, sizeof(r));
+            mem_write((uint8_t*)clip + 0xA4, &zero, sizeof(zero));
+        }
+    }
+
+    // Which box or bed it is in. Retried at most once a second while it
+    // disagrees: the area's own accept check can refuse, and the cat's own tick
+    // may hop it somewhere else.
+    void* cur_area = nullptr;
+    mem_read((const uint8_t*)hc + kHC_Area, &cur_area, sizeof(cur_area));
+    void* want_area = st.area < g.nareas ? g.areas[st.area] : nullptr;
+    const ULONGLONG now2 = GetTickCount64();
+    if (st.area != t->area_tried || (cur_area != want_area && now2 - t->area_at > 1000)) {
         t->area_tried = st.area;
+        t->area_at = now2;
         void* cur = nullptr;
         mem_read((const uint8_t*)hc + kHC_Area, &cur, sizeof(cur));
         void* want = st.area < g.nareas ? g.areas[st.area] : nullptr;
@@ -753,7 +793,6 @@ bool house_cat_update(void* hc) {
         }
     }
     ++g.puppeted;
-    return false;
 }
 
 bool house_cat_late(void* hc) {

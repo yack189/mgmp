@@ -656,8 +656,8 @@ void __fastcall h_HouseUpdate(void* self) {
 // or physics here; mgmp_house writes their picture of it instead.
 fn_this o_HouseCatUpdate = nullptr;
 void __fastcall h_HouseCatUpdate(void* self) {
-    if (!house_cat_update(self)) return;
-    o_HouseCatUpdate(self);
+    if (house_cat_update(self)) o_HouseCatUpdate(self);
+    house_cat_post(self);
 }
 fn_this o_HousePassDay = nullptr;
 void __fastcall h_HousePassDay(void* house) {
