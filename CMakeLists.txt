@@ -50,6 +50,7 @@ add_library(mgmp SHARED
     src/determinism/mgmp_record.cpp
     src/determinism/mgmp_rng.cpp
     src/determinism/mgmp_replay.cpp
+    src/determinism/mgmp_watch.cpp
     src/net/mgmp_net.cpp
     src/session/mgmp_lockstep.cpp
     src/session/mgmp_session.cpp

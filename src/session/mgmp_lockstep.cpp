@@ -28,6 +28,7 @@
 #include "mgmp_split.h"
 #include "mgmp_rtti.h"
 #include "mgmp_rng.h"
+#include "mgmp_watch.h"
 #include "mgmp_log.h"
 
 #include <windows.h>
@@ -831,6 +832,8 @@ void snapshot_cats(void* turn_control) {
         g.cats[g.cat_count++] = c;
     }
     g.snapped      = true;
+    if (config().record)
+        watch_arm(rng_global_stream(), (uintptr_t)GetModuleHandleW(nullptr));
     g.snapped_list = list;
 
     // A new roster invalidates the table the last hash was taken over, and
@@ -2740,6 +2743,10 @@ void lockstep_turn_boundary(void* turn_control) {
     // and before it is logged, so a turn's deltas sit above the hash line they
     // explain rather than under the next turn's.
     trace_state_deltas();
+
+    // Diagnostic only (debug.record): which instructions wrote the simulation
+    // stream during the turn just closed. See mgmp_watch.h.
+    if (config().record) watch_report(mine.turn);
 
     log_line("LOCKSTEP", "turn %u hash rng=%016llx state=%016llx queue=%u chars=%u/%u%s",
              mine.turn,
