@@ -720,6 +720,30 @@ int main() {
               "enc refuses a length with a null payload");
     }
 
+    printf("\n-- HOUSEPOOP and HOUSENIGHT round-trip --\n");
+    {
+        HousePoopMsg m{}; m.op = kPoopClean; m.cx = -3; m.cy = 7;
+        m.gx = 12.5; m.gy = -40.25;
+        uint32_t n = enc_housepoop(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_HOUSEPOOP, "HOUSEPOOP encodes with its type");
+        HousePoopMsg o{};
+        check(dec_housepoop(r, o) && o.op == kPoopClean && o.cx == -3 && o.cy == 7 &&
+              o.gx == 12.5 && o.gy == -40.25, "HOUSEPOOP fields survive");
+        check(r.pos == r.len, "HOUSEPOOP consumed exactly the frame");
+    }
+    {
+        HouseNightMsg m{}; m.phase = 1;
+        for (int i = 0; i < 4; ++i) { m.sim[i] = 0x1111ULL * (i + 1); m.pres[i] = ~m.sim[i]; }
+        uint32_t n = enc_housenight(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_HOUSENIGHT, "HOUSENIGHT encodes with its type");
+        HouseNightMsg o{};
+        check(dec_housenight(r, o) && o.phase == 1 && memcmp(o.sim, m.sim, 32) == 0 &&
+              memcmp(o.pres, m.pres, 32) == 0, "HOUSENIGHT fields survive");
+        check(r.pos == r.len, "HOUSENIGHT consumed exactly the frame");
+    }
+
     printf("\n-- MAPSELECT and PRESS round-trip --\n");
     {
         MapSelectMsg m{}; m.index = 17; m.node_count = 42;

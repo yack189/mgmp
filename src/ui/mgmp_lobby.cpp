@@ -608,10 +608,12 @@ void draw_hud(const Content& c) {
         const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
         dl->AddRectFilled(a, b, col(kPanel, 0.75f), 10.0f * s);
         dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s), col(kGreen), mine);
-    } else if (house_reload_pending() || house_night_pending()) {
-        const char* msg = house_reload_pending()
+    } else if (house_reload_pending() || house_night_pending() || house_night_replaying()) {
+        const char* msg = house_night_replaying()
+            ? "La noche del host: al terminar se carga el nuevo día"
+            : house_reload_pending()
             ? "Nuevo día: cargando la casa del host..."
-            : "Pasando la noche... el otro jugador cargará el nuevo día";
+            : "Pasando la noche... el otro jugador la ve también";
         ImFont* ft = L.font_title ? L.font_title : fb;
         const float bpx = 20.0f * s;
         const ImVec2 bs = ft->CalcTextSizeA(bpx, FLT_MAX, 0.0f, msg);

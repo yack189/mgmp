@@ -100,6 +100,11 @@ static const SigTargetDesc kTargetSigs[] = {
       "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 68 A8 48 81 EC 18 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 48 8B F9 45 33 F6 44 38 B1 D9 00 00 00" },
     { 0x001EF4D0, "PASSDAY",
       "48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 88 FE FF FF 48 81 EC 78 02 00 00 0F 29 B4 24 60 02 00 00 48 8B D9" },
+    // Added by hand 2026-10-12, both unique in .text of 4127cd6a.
+    { 0x002EF9D0, "POOPCLEAN",
+      "40 53 48 83 EC 50 48 8B D9 48 8B 89 D8 02 00 00 48 85 C9 0F 84 ? ? ? ? 4C 8B 41 18 48 83 C1 08" },
+    { 0x002EA620, "POOPCELLS",
+      "40 55 56 57 48 83 EC 30 48 8B F2 48 C7 02 00 00 00 00 48 C7 42 08 00 00 00 00 48 8B E9 8B 91 F0 00 00 00" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.
@@ -157,6 +162,13 @@ static const SigTargetDesc kCallSigs[] = {
       "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 48 8B F2 48 8B 49 70 4C" },
     { 0x002E89C0, "CatPlacementArea remove (sub_1402E89C0)",
       "48 89 5C 24 08 57 48 83 EC 20 48 8B 01 48 8B FA 48 8B D9 FF 90 00 01 00 00 84" },
+    // Added by hand 2026-10-12, all unique in .text of 4127cd6a.
+    { 0x002EA9A0, "FurnitureGrid spawn poop (sub_1402EA9A0)",
+      "40 53 48 83 EC 40 48 8D 54 24 20 48 8B D9 E8 ? ? ? ? 83 7C 24 24 00 0F 84 ? ? ? ? 65 48 8B 04 25 58 00 00 00" },
+    { 0x002EF9D0, "FurniturePiece clean poop (sub_1402EF9D0)",
+      "40 53 48 83 EC 50 48 8B D9 48 8B 89 D8 02 00 00 48 85 C9 0F 84 ? ? ? ? 4C 8B 41 18 48 83 C1 08" },
+    { 0x001EF470, "House::EndDay (sub_1401EF470)",
+      "48 83 EC 28 80 B9 B0 00 00 00 00 75 ? C6 81 B0 00 00 00 01 48 8B 05 ? ? ? ? 80 78 38 00" },
 };
 
 // Globals, recovered from a referencing instruction's own

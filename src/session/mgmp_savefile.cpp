@@ -882,7 +882,8 @@ void savefile_on_message(const SaveFileMsg& m) {
              m.slot, m.name, m.size, (unsigned long long)h);
 
     // In the shared house, a fresh save is the host's new day: go and load it.
-    if (m.fresh && leave_scene_live("House")) house_request_reload();
+    if (m.fresh && (leave_scene_live("House") || house_night_replaying()))
+        house_request_reload();
 }
 
 int savefile_autoselect(void* ss) {

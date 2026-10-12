@@ -97,6 +97,10 @@ enum Target : int {
                          // cat "swat" AI; skipped for a mirrored cat
     T_HousePassDay,      // House::PassDay's body (sub_1401EF4D0, House*) -- the
                          // night: breeding, strays, ageing, then the house save
+    T_PoopClean,         // FurniturePiece clean-up (sub_1402EF9D0) -- a poop
+                         // cleaned on one peer is cleaned on the other
+    T_PoopCells,         // FurnitureGrid free cells (sub_1402EA620) -- narrowed
+                         // to the host's cell while the client spawns a poop
     T_COUNT
 };
 
@@ -554,6 +558,16 @@ static const TargetDesc kTargets[T_COUNT] = {
     // house_state, current_day, ...). After it returns the save on disk IS the
     // new day.
     { 0x001EF4D0, "PASSDAY",   "House::PassDay body (sub_1401EF4D0)" },
+    // void(FurniturePiece*). Checks its own meta name is "poop" (piece+0x2D8 ->
+    // +8, the same test as sub_1402EF980) and does nothing otherwise; then plays
+    // Poop_Poop, takes the item out of the HouseInventory and destroys the
+    // piece. Two callers: the piece's click (sub_1402ED8E0) and House vtable
+    // slot 104 (sub_1401FE940).
+    { 0x002EF9D0, "POOPCLEAN", "FurniturePiece clean poop (sub_1402EF9D0)" },
+    // void(FurnitureGrid*, CustomVector<iVec2D>* out) -- {u32 cap, u32 count,
+    // iVec2D* data}. Its one consumer that matters is the poop spawn below,
+    // which picks a random entry on TLS+0x178.
+    { 0x002EA620, "POOPCELLS", "FurnitureGrid free cells (sub_1402EA620)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.
@@ -650,6 +664,13 @@ enum Call : int {
     C_AreaAdd,               // void(CatPlacementArea*, HouseCat*) -- accept-
                              // checked; takes the cat out of its old area
     C_AreaRemove,            // void(CatPlacementArea*, HouseCat*)
+
+    // --- the shared house's poop and night ---------------------------------
+    C_PoopSpawn,             // void(FurnitureGrid*) -- FurnitureGrid vtable slot
+                             // 34: a "poop" item on a random free cell
+    C_PoopClean,             // the T_PoopClean function, called to mirror
+    C_HouseEndDay,           // void(House*) -- the sign's end of the day: sets
+                             // House+0xB0 and starts the fade into PassDay
     C_COUNT
 };
 
@@ -894,6 +915,9 @@ static const CallDesc kCalls[C_COUNT] = {
     { 0x009AA360, "Animator set state (sub_1409AA360)" },
     { 0x002E88D0, "CatPlacementArea add (sub_1402E88D0)" },
     { 0x002E89C0, "CatPlacementArea remove (sub_1402E89C0)" },
+    { 0x002EA9A0, "FurnitureGrid spawn poop (sub_1402EA9A0)" },
+    { 0x002EF9D0, "FurniturePiece clean poop (sub_1402EF9D0)" },
+    { 0x001EF470, "House::EndDay (sub_1401EF470)" },
 };
 
 // sub_140138A10 IS NOT A DRAW ROUTINE, and it is in the table above only

@@ -10,6 +10,7 @@
 #include "mgmp_leave.h"
 #include "mgmp_ui.h"
 #include "mgmp_follow.h"
+#include "mgmp_rng.h"
 
 #include <windows.h>
 #include <cmath>
@@ -29,6 +30,7 @@ using fn_scene_list  = void    (__fastcall*)(void* scene, int type);
 using fn_anim_set    = void    (__fastcall*)(void* animator, int pose, void* str);
 using fn_area_op     = void    (__fastcall*)(void* area, void* cat);
 using fn_str_dtor    = void    (__fastcall*)(void* str);
+using fn_this        = void    (__fastcall*)(void* self);
 
 // --- the scene's typed component lists ---------------------------------------
 //
@@ -72,6 +74,34 @@ constexpr uint64_t kSettleMs      = 350;    // at rest this long -> hand it back
 constexpr uint64_t kSettleMaxMs   = 6000;   // ...or this long after release
 constexpr uint64_t kStaleTargetMs = 3000;   // no word for this long -> run it locally
 constexpr uint32_t kMaxAreas      = 32;
+
+// --- poop ----------------------------------------------------------------------
+// Read off the spawn, sub_1402EA9A0 (FurnitureGrid vtable slot 34):
+//   piece = sub_1401ACA10(scene, ..., HouseInventory item "poop")
+//   *(piece+0x38)+0x80/+0x88 = *(grid+0x38)+0x80/+0x88 + (double)cell
+//   sub_1402EED50(piece, grid)              -- which stores grid at piece+0x48
+// and off the clean-up's own name test: *(piece+0x2D8)+8 is the item's name.
+constexpr int       kType_FurnGrid  = 0x3ED;
+constexpr int       kType_FurnPiece = 0x3F0;
+constexpr uintptr_t kFP_Entity  = 0x38;
+constexpr uintptr_t kFP_Grid    = 0x48;
+constexpr uintptr_t kFP_Meta    = 0x2D8;
+constexpr uintptr_t kMeta_Name  = 0x08;
+constexpr uintptr_t kFG_Entity  = 0x38;
+constexpr uint32_t  kMaxPoops   = 256;
+constexpr uint64_t  kPoopScanMs = 250;
+
+struct Poop {
+    void*   piece = nullptr;
+    double  gx = 0, gy = 0;
+    int32_t cx = 0, cy = 0;
+};
+
+// --- the night ---------------------------------------------------------------------
+// The house's two streams, as mgmp_rng names them: +0x178 the simulation
+// stream every night roll draws on, +0x198 (= +0x178 + 0x20) presentation.
+constexpr uint64_t kNightNoInterMs = 20000;    // no night screens by then: over
+constexpr uint64_t kNightMaxMs     = 300000;
 
 struct Cat {
     void*    hc   = nullptr;
@@ -152,6 +182,29 @@ struct State {
     uint32_t  escapes        = 0;
     uintptr_t base = 0;
     bool said_cats = false;
+
+    // --- poop -------------------------------------------------------------
+    bool      poop_ok      = false;
+    fn_this   poop_spawn   = nullptr;   // C_PoopSpawn
+    fn_this   poop_clean   = nullptr;   // C_PoopClean (through our own detour)
+    Poop      poops[kMaxPoops];
+    uint32_t  npoops       = 0;
+    bool      poop_based   = false;     // host: poops[] is a baseline to diff
+    ULONGLONG poop_scan_at = 0;
+    bool      poop_injecting = false;
+    bool      force_cell   = false;
+    int32_t   force_cx = 0, force_cy = 0;
+    uint32_t  poop_sent = 0, poop_got = 0, poop_missed = 0;
+
+    // --- the night (client) ----------------------------------------------
+    fn_this   end_day      = nullptr;   // C_HouseEndDay
+    bool      night_go     = false;     // call EndDay on the next house tick
+    bool      night_seeded = false;     // PassDay is to take these streams
+    uint64_t  night_sim[4] = {}, night_pres[4] = {};
+    ULONGLONG night_at     = 0;         // our own night is on screen
+    bool      night_seen_inter = false;
+    bool      host_after_ok = false, mine_after_ok = false;
+    uint64_t  host_after[4] = {}, mine_after[4] = {};
 };
 
 State g;
@@ -225,6 +278,104 @@ void* list_of(void* scene, int type, uint32_t& count, void**& data) {
     if (!mem_read((const uint8_t*)list + 0x10, &data, sizeof(data)) || !data) return nullptr;
     count = n;
     return list;
+}
+
+// --- poop -------------------------------------------------------------------------
+
+bool piece_is_poop(void* piece) {
+    void* meta = nullptr;
+    if (!mem_read((const uint8_t*)piece + kFP_Meta, &meta, sizeof(meta)) || !meta) return false;
+    char name[8];
+    return mem_read_std_string((const uint8_t*)meta + kMeta_Name, name, sizeof(name)) &&
+           strcmp(name, "poop") == 0;
+}
+
+bool entity_xy(void* comp, uintptr_t ent_off, double& x, double& y) {
+    void* e = nullptr;
+    if (!mem_read((const uint8_t*)comp + ent_off, &e, sizeof(e)) || !e) return false;
+    double d[2];
+    if (!mem_read((const uint8_t*)e + kEnt_X, d, sizeof(d))) return false;
+    if (!std::isfinite(d[0]) || !std::isfinite(d[1])) return false;
+    x = d[0]; y = d[1];
+    return true;
+}
+
+bool poop_of(void* piece, Poop& p) {
+    if (!piece || !piece_is_poop(piece)) return false;
+    void* grid = nullptr;
+    if (!mem_read((const uint8_t*)piece + kFP_Grid, &grid, sizeof(grid)) || !grid) return false;
+    double px, py;
+    if (!entity_xy(piece, kFP_Entity, px, py) || !entity_xy(grid, kFG_Entity, p.gx, p.gy))
+        return false;
+    p.piece = piece;
+    p.cx = (int32_t)std::lround(px - p.gx);
+    p.cy = (int32_t)std::lround(py - p.gy);
+    return true;
+}
+
+bool same_grid(double ax, double ay, double bx, double by) {
+    return std::fabs(ax - bx) < 0.5 && std::fabs(ay - by) < 0.5;
+}
+
+// Every poop in the house, now.
+uint32_t read_poops(void* scene, Poop* out, uint32_t cap) {
+    uint32_t n = 0, k = 0;
+    void** data = nullptr;
+    if (!list_of(scene, kType_FurnPiece, n, data)) return 0;
+    for (uint32_t i = 0; i < n && k < cap; ++i) {
+        void* piece = nullptr;
+        if (!mem_read(data + i, &piece, sizeof(piece)) || !piece) continue;
+        if (poop_of(piece, out[k])) ++k;
+    }
+    return k;
+}
+
+const Poop* poop_find(const Poop* set, uint32_t n, double gx, double gy, int32_t cx, int32_t cy) {
+    for (uint32_t i = 0; i < n; ++i)
+        if (set[i].cx == cx && set[i].cy == cy && same_grid(set[i].gx, set[i].gy, gx, gy))
+            return &set[i];
+    return nullptr;
+}
+
+void* grid_at(void* scene, double gx, double gy) {
+    uint32_t n = 0;
+    void** data = nullptr;
+    if (!list_of(scene, kType_FurnGrid, n, data)) return nullptr;
+    for (uint32_t i = 0; i < n; ++i) {
+        void* grid = nullptr;
+        double x, y;
+        if (!mem_read(data + i, &grid, sizeof(grid)) || !grid) continue;
+        if (entity_xy(grid, kFG_Entity, x, y) && same_grid(x, y, gx, gy)) return grid;
+    }
+    return nullptr;
+}
+
+// HOST: diff the house's poops against the last look and announce the new
+// ones. A clean-up is announced by its hook, not here -- a vanished poop says
+// nothing about who cleaned it, and the other peer may be the one who did.
+void scan_poops(void* scene, ULONGLONG now) {
+    if (now - g.poop_scan_at < kPoopScanMs) return;
+    g.poop_scan_at = now;
+    static Poop cur[kMaxPoops];
+    const uint32_t n = read_poops(scene, cur, kMaxPoops);
+    // The night makes the morning's poops and the client loads those with the
+    // save, so a baseline is taken rather than diffed while it is pending.
+    if (g.poop_based && !g.day_passed_at) {
+        for (uint32_t i = 0; i < n; ++i) {
+            if (poop_find(g.poops, g.npoops, cur[i].gx, cur[i].gy, cur[i].cx, cur[i].cy))
+                continue;
+            HousePoopMsg m{};
+            m.op = kPoopSpawn;
+            m.cx = cur[i].cx; m.cy = cur[i].cy;
+            m.gx = cur[i].gx; m.gy = cur[i].gy;
+            if (net_send_housepoop(m)) ++g.poop_sent;
+            log_line_lvl(LogLevel::Trace, "HOUSE", "a poop appeared at cell %d,%d of the"
+                         " grid at %.1f,%.1f -> sent", m.cx, m.cy, m.gx, m.gy);
+        }
+    }
+    memcpy(g.poops, cur, sizeof(Poop) * n);
+    g.npoops = n;
+    g.poop_based = true;
 }
 
 void read_cats(void* scene) {
@@ -393,6 +544,17 @@ void house_set_base(uintptr_t base) {
         log_line("HOUSE", "!! the house cat functions did not resolve -- each player will"
                           " see their own cats in the house");
 
+    g.poop_spawn = (fn_this)addr_of_call(C_PoopSpawn);
+    g.poop_clean = (fn_this)addr_of_call(C_PoopClean);
+    g.end_day    = (fn_this)addr_of_call(C_HouseEndDay);
+    g.poop_ok = g.cats_ok && g.poop_spawn && g.poop_clean;
+    if (!g.poop_ok)
+        log_line("HOUSE", "!! the poop functions did not resolve -- each player will have"
+                          " to clean up their own");
+    if (!g.end_day)
+        log_line("HOUSE", "!! House::EndDay did not resolve -- the other player will not"
+                          " see the night's screens, only the new day");
+
     g.resolved    = false;
     g.scene_cam   = (fn_scene_cam)  addr_of_call(C_SceneCamera);
     g.mouse_world = (fn_mouse_world)addr_of_call(C_CameraMouseWorld);
@@ -452,6 +614,28 @@ void house_on_update(void* house) {
                  g.ncats, g.nareas);
     }
     const ULONGLONG now = GetTickCount64();
+
+    // --- the night: the client walks into the host's -----------------------
+    if (g.night_go) {
+        g.night_go = false;
+        uint8_t passing = 0;
+        mem_read((const uint8_t*)house + 0xB0, &passing, 1);
+        if (passing) {
+            g.night_seeded = false;
+            log_line("HOUSE", "!! the host's night started while this house was already"
+                              " ending its own day -- its screens may differ from the host's");
+        } else {
+            g.night_at = now;
+            g.night_seen_inter = false;
+            g.end_day(house);
+            log_line("HOUSE", "the host ended the day -- playing the same night here,"
+                              " from the host's dice");
+        }
+    }
+
+    // --- poop: the host announces new ones -----------------------------------
+    if (g.poop_ok && net_role() == NetRole::Host) scan_poops(scene, now);
+
     void* held = held_cat(scene);
     on_local_grab_change(held, now);
     settle(held, now);
@@ -639,8 +823,24 @@ bool house_sign_refused_recently() {
     return g.sign_refused_at && GetTickCount64() - g.sign_refused_at < 4000;
 }
 
+static void compare_night();
+
 void house_on_day_passed(void*) {
-    if (!net_active() || net_role() != NetRole::Host) return;
+    if (!net_active()) return;
+    if (uint64_t* st = rng_global_stream()) {
+        if (net_role() == NetRole::Host) {
+            HouseNightMsg m{};
+            m.phase = 1;
+            memcpy(m.sim, st, sizeof(m.sim));
+            memcpy(m.pres, st + 4, sizeof(m.pres));
+            net_send_housenight(m);
+        } else if (g.night_at) {
+            memcpy(g.mine_after, st, sizeof(g.mine_after));
+            g.mine_after_ok = true;
+            compare_night();
+        }
+    }
+    if (net_role() != NetRole::Host) return;
     g.day_passed_at = GetTickCount64();
     log_line("HOUSE", "the night has passed and the house is saved -- the new day goes to"
                       " the other player once the night's screens are done");
@@ -669,6 +869,135 @@ void house_request_reload() {
 
 bool house_reload_pending() { return g.reload_at != 0; }
 
+bool house_night_replaying() { return g.night_at != 0 || g.night_go; }
+
+static void compare_night() {
+    if (!g.host_after_ok || !g.mine_after_ok) return;
+    g.host_after_ok = g.mine_after_ok = false;
+    if (memcmp(g.host_after, g.mine_after, sizeof(g.host_after)) == 0)
+        log_line_lvl(LogLevel::Trace, "HOUSE", "night AGREES with the host's: the same"
+                     " dice were rolled the same number of times");
+    else
+        log_line_lvl(LogLevel::Warn, "HOUSE", "the night shown here DIFFERS from the host's"
+                     " (stream %016llx vs %016llx) -- the two houses were not quite the"
+                     " same; the new day loaded next is the host's either way",
+                     (unsigned long long)g.mine_after[0], (unsigned long long)g.host_after[0]);
+}
+
+void house_before_pass_day(void*) {
+    uint64_t* st = rng_global_stream();
+    if (!st || !net_active()) return;
+    if (net_role() == NetRole::Host) {
+        HouseNightMsg m{};
+        m.phase = 0;
+        memcpy(m.sim, st, sizeof(m.sim));
+        memcpy(m.pres, st + 4, sizeof(m.pres));
+        net_send_housenight(m);
+        return;
+    }
+    if (g.night_seeded) {
+        memcpy(st, g.night_sim, sizeof(g.night_sim));
+        memcpy(st + 4, g.night_pres, sizeof(g.night_pres));
+        g.night_seeded = false;
+        log_line_lvl(LogLevel::Trace, "HOUSE", "night seeded from the host's streams");
+    }
+}
+
+void house_on_night(uint8_t, const HouseNightMsg& m) {
+    if (net_role() != NetRole::Client) return;
+    if (m.phase == 1) {
+        memcpy(g.host_after, m.sim, sizeof(g.host_after));
+        g.host_after_ok = true;
+        compare_night();
+        return;
+    }
+    if (!g.end_day || !house_active() || g.reload_at || house_night_replaying()) {
+        log_line_lvl(LogLevel::Trace, "HOUSE", "the host's night began; not in the house"
+                     " here, so only the new day will follow");
+        return;
+    }
+    memcpy(g.night_sim, m.sim, sizeof(g.night_sim));
+    memcpy(g.night_pres, m.pres, sizeof(g.night_pres));
+    g.night_seeded = true;
+    g.night_go = true;
+    g.host_after_ok = g.mine_after_ok = false;
+}
+
+// --- poop ---------------------------------------------------------------------------
+
+void house_on_poop(uint8_t from, const HousePoopMsg& m) {
+    if (!g.poop_ok || !g.house || !house_active()) return;
+    if (house_night_replaying() || g.reload_at) return;     // a new day is coming
+    void* scene = nullptr;
+    if (!mem_read((const uint8_t*)g.house + kComp_Scene, &scene, sizeof(scene)) || !scene)
+        return;
+    static Poop cur[kMaxPoops];
+    const uint32_t n = read_poops(scene, cur, kMaxPoops);
+    const Poop* have = poop_find(cur, n, m.gx, m.gy, m.cx, m.cy);
+    ++g.poop_got;
+
+    if (m.op == kPoopClean) {
+        if (!have) {
+            ++g.poop_missed;
+            log_line_lvl(LogLevel::Trace, "HOUSE", "peer %u cleaned a poop at %d,%d that"
+                         " is not here", (unsigned)from, m.cx, m.cy);
+            return;
+        }
+        g.poop_injecting = true;
+        g.poop_clean(have->piece);
+        g.poop_injecting = false;
+        // The host's next scan must not see it as anything at all.
+        if (Poop* b = (Poop*)poop_find(g.poops, g.npoops, m.gx, m.gy, m.cx, m.cy))
+            *b = g.poops[--g.npoops];
+        return;
+    }
+
+    // A spawn: only ever from the host.
+    if (net_role() != NetRole::Client || have) return;
+    void* grid = grid_at(scene, m.gx, m.gy);
+    if (!grid) {
+        ++g.poop_missed;
+        log_line("HOUSE", "!! the host's poop is on a grid at %.1f,%.1f this house does"
+                          " not have", m.gx, m.gy);
+        return;
+    }
+    g.force_cx = m.cx; g.force_cy = m.cy;
+    g.force_cell = true;
+    g.poop_injecting = true;
+    g.poop_spawn(grid);
+    g.poop_injecting = false;
+    g.force_cell = false;
+}
+
+bool house_poop_clean(void* piece) {
+    if (g.poop_injecting || !g.poop_ok || !net_active() || !house_active()) return true;
+    Poop p;
+    if (!poop_of(piece, p)) return true;
+    HousePoopMsg m{};
+    m.op = kPoopClean;
+    m.cx = p.cx; m.cy = p.cy;
+    m.gx = p.gx; m.gy = p.gy;
+    if (net_send_housepoop(m)) ++g.poop_sent;
+    if (Poop* b = (Poop*)poop_find(g.poops, g.npoops, p.gx, p.gy, p.cx, p.cy))
+        *b = g.poops[--g.npoops];
+    return true;
+}
+
+// The free cells of a grid, narrowed to one: the spawn then picks it whatever
+// the dice say. Only while WE are spawning the host's poop.
+void house_poop_cells(void*, void* out) {
+    if (!g.force_cell || !out) return;
+    g.force_cell = false;                     // the spawn asks exactly once
+    uint32_t cap = 0;
+    void* data = nullptr;
+    if (!mem_read(out, &cap, sizeof(cap)) || !cap) return;
+    if (!mem_read((const uint8_t*)out + 8, &data, sizeof(data)) || !data) return;
+    const int32_t cell[2] = { g.force_cx, g.force_cy };
+    const uint32_t one = 1;
+    mem_write(data, cell, sizeof(cell));
+    mem_write((uint8_t*)out + 4, &one, sizeof(one));
+}
+
 void house_pump() {
     const ULONGLONG now = GetTickCount64();
 
@@ -690,6 +1019,22 @@ void house_pump() {
             s_was_in_house = false;
             savefile_publish_fresh("the host departed from the house");
         }
+    }
+
+    // --- client: our own copy of the host's night --------------------------
+    // Wait it out before going anywhere: the screens are the whole point, and
+    // the House scene may be gone while they are up.
+    if (g.night_at) {
+        const bool inter = leave_scene_live("Interstitial");
+        if (inter) g.night_seen_inter = true;
+        const ULONGLONG age = now - g.night_at;
+        const bool over = (g.night_seen_inter && !inter && leave_scene_live("House")) ||
+                          (!g.night_seen_inter && age > kNightNoInterMs) ||
+                          age > kNightMaxMs;
+        if (!over) return;
+        g.night_at = 0;
+        g.night_seeded = false;
+        log_line_lvl(LogLevel::Trace, "HOUSE", "the night's screens are done here");
     }
 
     // --- client: get out to the title screen --------------------------------
@@ -726,7 +1071,11 @@ void house_shutdown() {
         log_line_lvl(LogLevel::Trace, "HOUSE", "done: %u snapshot(s) sent, %u received, %u"
                      " mirrored cat frame(s), %u local anim change(s) held back, %u area"
                      " move(s)", g.sent, g.got, g.puppeted, g.swallowed_anims, g.areas_moved);
+    if (g.poop_sent || g.poop_got)
+        log_line_lvl(LogLevel::Trace, "HOUSE", "poop: %u sent, %u received, %u not found",
+                     g.poop_sent, g.poop_got, g.poop_missed);
     g.nauth = 0; g.ntgt = 0; g.ncats = 0; g.held_prev = nullptr;
+    g.npoops = 0; g.poop_based = false;
 }
 
 bool house_active() {

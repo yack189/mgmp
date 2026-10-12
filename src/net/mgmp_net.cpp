@@ -174,6 +174,8 @@ bool decode_into(const uint8_t* buf, uint32_t len, NetMsg& m) {
         case MSG_PRESS:     return dec_press(r, m.press);
         case MSG_HOUSECATS: return dec_housecats(r, m.housecats);
         case MSG_HOUSEGRAB: return dec_housegrab(r, m.housegrab);
+        case MSG_HOUSEPOOP: return dec_housepoop(r, m.housepoop);
+        case MSG_HOUSENIGHT: return dec_housenight(r, m.housenight);
         case MSG_PEERS:   return dec_peers(r, m.peers);
         case MSG_HALT:    return dec_halt(r, m.halt);
         case MSG_REFUSE:  r.str(m.refuse, sizeof(m.refuse)); return r.ok;
@@ -655,6 +657,8 @@ bool net_send_hostleft(const HostLeftMsg& m) { MGMP_SEND_WITH(enc_hostleft, m); 
 bool net_send_mapselect(const MapSelectMsg& m) { MGMP_SEND_WITH(enc_mapselect, m); }
 bool net_send_press(const PressMsg& m) { MGMP_SEND_WITH(enc_press, m); }
 bool net_send_housegrab(const HouseGrabMsg& m) { MGMP_SEND_WITH(enc_housegrab, m); }
+bool net_send_housepoop(const HousePoopMsg& m) { MGMP_SEND_WITH(enc_housepoop, m); }
+bool net_send_housenight(const HouseNightMsg& m) { MGMP_SEND_WITH(enc_housenight, m); }
 bool net_send_refuse (const char* reason) { MGMP_SEND_WITH(enc_refuse,  reason); }
 
 #undef MGMP_SEND_WITH

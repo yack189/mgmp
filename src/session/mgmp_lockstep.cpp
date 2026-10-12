@@ -2235,6 +2235,12 @@ void lockstep_pump() {
             case MSG_HOUSEGRAB:
                 house_on_grab(m.from, m.housegrab);
                 break;
+            case MSG_HOUSEPOOP:
+                house_on_poop(m.from, m.housepoop);
+                break;
+            case MSG_HOUSENIGHT:
+                house_on_night(m.from, m.housenight);
+                break;
 
             // Also not epoch-gated: a decision-screen choice belongs to a map
             // node, not to a battle, and the epoch counter does not advance on

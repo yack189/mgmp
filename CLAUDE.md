@@ -1357,6 +1357,33 @@ transition bodies that end at the title screen, for the record, are
 not); both are `std::function` `_Do_call`s with only data xrefs, i.e. transition
 completions rather than callable entry points.
 
+### The shared house's poop and night (measured on `4127cd6a`)
+
+**A poop is a `FurniturePiece` (type `0x3F0`) whose item name is `"poop"`** —
+`*(piece+0x2D8)+8`, the test `sub_1402EF980` makes. Its grid is `piece+0x48`
+(written by the placement, `sub_1402EED50`), and its entity `piece+0x38` sits at
+the grid entity's `+0x80/+0x88` plus the integer cell — so a poop is named by
+(grid entity position, cell) on both peers.
+
+| | |
+|---|---|
+| `sub_1402EA9A0` | FurnitureGrid vtable slot 34: free cells (`sub_1402EA620`, `{u32 cap, u32 count, iVec2D*}`) → one picked on `TLS+0x178` → HouseInventory item `"poop"` → piece. **The only slot-34 caller is House::update's debug `P` key** |
+| `sub_1402EF9D0` | the clean-up. Self-guarded on the name; callers: the piece's click and House vtable slot 104 |
+| `sub_1401EF470` | `House::EndDay` — sets `House+0xB0`, starts the fade whose lambda runs PassDay (`sub_1401EF4D0`). Callers `1401E1E80`, `1401E2FD0`, `1401F8EA0` |
+
+The morning's poops are made by the night, so they arrive with the host's save.
+The host also diffs its house's poops every 250 ms and announces new ones; the
+client spawns each through slot 34 with the free-cell list narrowed to the one
+cell (`T_PoopCells`). A clean-up on either peer is mirrored (`T_PoopClean`).
+
+**The night is replayed for display only.** The host sends both streams
+(`+0x178`, `+0x198`) just before its PassDay; the client calls `House::EndDay`,
+writes them in before its own PassDay, and plays the same night screens. Then
+it loads the host's saved day exactly as before — the replay never decides
+anything. Both post-PassDay sim streams are compared and logged (`night
+AGREES`/`DIFFERS`), so whether the night is deterministic across two houses is
+measured, not assumed. **Not yet measured.**
+
 ### Where the run is standing — `MapScreen+0xA0` is the map MARKER
 
 `glaiel::MapNode::Click` @ `0x140227C90` **selects** a node, it does not enter

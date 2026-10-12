@@ -659,8 +659,21 @@ void __fastcall h_HouseCatUpdate(void* self) {
 }
 fn_this o_HousePassDay = nullptr;
 void __fastcall h_HousePassDay(void* house) {
+    house_before_pass_day(house);
     o_HousePassDay(house);
     house_on_day_passed(house);
+}
+fn_this o_PoopClean = nullptr;
+void __fastcall h_PoopClean(void* piece) {
+    if (!house_poop_clean(piece)) return;
+    o_PoopClean(piece);
+}
+// Returns its `out` argument (mov rax,rsi at the epilogue).
+fn_two_ptr o_PoopCells = nullptr;
+void* __fastcall h_PoopCells(void* grid, void* out) {
+    void* r = o_PoopCells(grid, out);
+    house_poop_cells(grid, out);
+    return r;
 }
 fn_this o_HouseCatLate = nullptr;
 void __fastcall h_HouseCatLate(void* self) {
@@ -854,6 +867,8 @@ const Binding kBindings[] = {
     { T_HouseCatPhys,     (void*)&h_HouseCatPhys,     (void**)&o_HouseCatPhys },
     { T_HouseCatLate,     (void*)&h_HouseCatLate,     (void**)&o_HouseCatLate },
     { T_HousePassDay,     (void*)&h_HousePassDay,     (void**)&o_HousePassDay },
+    { T_PoopClean,        (void*)&h_PoopClean,        (void**)&o_PoopClean },
+    { T_PoopCells,        (void*)&h_PoopCells,        (void**)&o_PoopCells },
     { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 

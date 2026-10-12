@@ -29,6 +29,8 @@ namespace mgmp {
 
 struct HouseCatsMsg;
 struct HouseGrabMsg;
+struct HousePoopMsg;
+struct HouseNightMsg;
 
 void house_set_base(uintptr_t base);
 
@@ -89,11 +91,28 @@ bool house_sign_refused_recently();   // for the on-screen notice
 // host sends that save as a FRESH pick, and the client, still standing in the
 // old day, goes out to the title screen and loads it (the same path that brings
 // it into a run), so both stand in the same new day.
+void house_before_pass_day(void* house); // the PassDay hook, before the original
 void house_on_day_passed(void* house);   // the PassDay hook, after the original
 void house_request_reload();             // client: a fresh save arrived in the house
 bool house_reload_pending();             // client: for the on-screen notice
 bool house_night_pending();              // host: night screens still up
 void house_pump();                       // once a frame from the session tick
+
+// The client replays the host's night from the host's two streams, so the
+// breeding, fights and strays are on its screen too -- only to SHOW them: the
+// new day it then stands in is still the host's save, loaded as before.
+void house_on_night(uint8_t from, const HouseNightMsg& m);
+bool house_night_replaying();            // client: its own night screens are up
+
+// --- 4. POOP ---------------------------------------------------------------------
+//
+// A poop is a FurniturePiece named "poop" on a FurnitureGrid cell. The host's
+// house is scanned for new ones and each is spawned on the client through the
+// game's own spawn (FurnitureGrid slot 34) with its free-cell list narrowed to
+// the host's cell; a poop cleaned up on either peer is cleaned on the other.
+void house_on_poop(uint8_t from, const HousePoopMsg& m);
+bool house_poop_clean(void* piece);      // T_PoopClean: false = swallow
+void house_poop_cells(void* grid, void* out_cells);   // T_PoopCells, after
 
 void house_shutdown();
 
