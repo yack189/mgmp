@@ -49,6 +49,7 @@
 #include "mgmp_session.h"
 #include "mgmp_lockstep.h"
 #include "mgmp_follow.h"
+#include "mgmp_house.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -640,6 +641,14 @@ void __fastcall h_ButtonClick(void* button, bool force) {
     o_ButtonClick(button, force);
 }
 
+// The house's tick. After the original, so the camera it framed this frame is
+// the one the pointer is projected through.
+fn_this o_HouseUpdate = nullptr;
+void __fastcall h_HouseUpdate(void* self) {
+    o_HouseUpdate(self);
+    house_on_update(self);
+}
+
 void __fastcall h_ButtonUpdate(void* self) {
     // Fires for every button in the game. Outside a combat-menu tick this is a
     // load and a branch: combatlock_on_button's first test is the scope flag.
@@ -808,6 +817,7 @@ const Binding kBindings[] = {
     { T_BrainPreview,     (void*)&h_BrainPreview,     (void**)&o_BrainPreview },
     { T_MapNodeClick,     (void*)&h_MapNodeClick,     (void**)&o_MapNodeClick },
     { T_ButtonClick,      (void*)&h_ButtonClick,      (void**)&o_ButtonClick  },
+    { T_HouseUpdate,      (void*)&h_HouseUpdate,      (void**)&o_HouseUpdate  },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 
     { T_SaveScumPenalty, (void*)&h_SaveScum, (void**)&o_SaveScum },
@@ -941,6 +951,7 @@ int hooks_install() {
     aim_set_base(g_base);
     lockstep_set_base(g_base);
     cursor_set_base(g_base);
+    house_set_base(g_base);
     choice_set_base(g_base);
     savefile_set_base(g_base);
     leave_set_base(g_base);

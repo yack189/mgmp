@@ -85,6 +85,8 @@ enum Target : int {
                          // on a client: the host drives the map.
     T_ButtonClick,       // glaiel::Button::Click -- every button press, by
                          // name, for mirroring event/chest buttons between peers
+    T_HouseUpdate,       // glaiel::House::update (vtable 0x140F10158 slot 10) --
+                         // the house tick; source of the house camera and mouse
     T_COUNT
 };
 
@@ -510,6 +512,12 @@ static const TargetDesc kTargets[T_COUNT] = {
     // press can be both published and, on the peer that does not control the
     // screen, swallowed.
     { 0x0097E8E0, "BTNCLICK",  "glaiel::Button::Click(Button*, bool)" },
+
+    // The house's per-frame tick. Its first three calls are exactly the camera
+    // lookup this mod needs: `cam = sub_140978330(*(this+0x20))` (the scene's
+    // active camera), then `sub_1409796D0(cam, &mouse_world)`. It also tracks
+    // which room the mouse is over (House+0x88) and frames the camera on it.
+    { 0x001E5110, "HOUSEUPD",  "glaiel::House::update (slot 10)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.
@@ -589,6 +597,15 @@ enum Call : int {
 
     // --- pressing Play for a client that is stuck on the menu ------------
     C_ButtonClick,           // void(Button*, bool force) -- sub_1409764B0
+
+    // --- a scene's camera, for pointers in world space (mgmp_house.cpp) ---
+    C_SceneCamera,           // Camera*(Scene*) -- first camera with +0xA8 set;
+                             // a null scene means the one being updated
+    C_CameraMouseWorld,      // double*(Camera*, double out[2]) -- the mouse in
+                             // that camera's world. Out is read with MOVUPS only
+    C_CameraViewProj,        // float*(Camera*, float out[16]) -- column-major
+                             // view-projection; its inverse is what the line
+                             // above applies to the mouse's NDC
     C_COUNT
 };
 
@@ -819,6 +836,15 @@ static const CallDesc kCalls[C_COUNT] = {
     // The button is identified by the std::string at Button+504 (kBtn_Name),
     // never by pointer or by position in a panel.
     { 0x0097E8E0, "glaiel::Button::Click" },
+
+    // The three camera functions. Read off House::update's prologue and off
+    // sub_1409796D0 itself, which is
+    //     ndc   = sub_140986EE0(mouse)        // letterboxed fraction -> NdcRange
+    //     world = inverse(sub_1409785E0(cam)) * ndc
+    // so the forward matrix maps a world point back to the same NDC.
+    { 0x00978330, "Scene camera (sub_140978330)" },
+    { 0x009796D0, "Camera mouse->world (sub_1409796D0)" },
+    { 0x009785E0, "Camera view-projection (sub_1409785E0)" },
 };
 
 // sub_140138A10 IS NOT A DRAW ROUTINE, and it is in the table above only

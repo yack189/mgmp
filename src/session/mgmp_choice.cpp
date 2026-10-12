@@ -41,6 +41,10 @@ constexpr uintptr_t kOptStride     = 240;
 // resolve to a cat id the party table knows, or the host decides.
 constexpr uintptr_t kEvt_Subject   = 0x128;
 
+// Button+240: the click callback's std::function _Impl pointer -- Button::Click
+// does `v8 = *(Button+240); if (v8) (*(*v8 + 16))(v8);` (CLAUDE.md, main menu).
+constexpr uintptr_t kBtn_Callback  = 240;
+
 // MapNodeType values whose screen is a chest rather than a decision: treasure,
 // furniturebox, foodbox. The host alone opens those.
 bool chest_node(uint32_t t) { return t >= 13 && t <= 15; }
@@ -866,7 +870,22 @@ bool choice_on_button_click(void* button) {
 
     char name[64];
     if (!mem_read_std_string((const uint8_t*)button + kBtn_Name, name, sizeof(name)))
-        return true;
+        name[0] = 0;
+
+    // A census of every press in a session: the button's name and WHICH
+    // callback it runs (the std::function impl's vtable, as a module offset --
+    // stable for a build even when the name is empty). This is how the house's
+    // exits get identified from a real session.
+    {
+        void* impl = nullptr;
+        uintptr_t vt = 0;
+        if (mem_read((const uint8_t*)button + kBtn_Callback, &impl, sizeof(impl)) && impl)
+            mem_read(impl, &vt, sizeof(vt));
+        log_line_lvl(LogLevel::Trace, "PRESS", "button '%s' callback %s+%llX", name,
+                     vt && g.base && vt > g.base ? "exe" : "?",
+                     (unsigned long long)(vt && g.base && vt > g.base ? vt - g.base : vt));
+    }
+    if (!name[0]) return true;
 
     const bool exit   = is_exit(name);
     const bool choice = strcmp(name, "Event_ChoiceButton") == 0;

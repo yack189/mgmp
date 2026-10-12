@@ -518,6 +518,7 @@ void session_update() {
         leave_pump();
         party_pump();
         choice_pump();
+        cursor_pump();
         return;
     }
 

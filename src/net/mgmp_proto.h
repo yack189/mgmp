@@ -51,7 +51,7 @@ namespace mgmp {
 // So: if the value a peer puts in a message changes meaning, that is a protocol
 // change even when every byte stays where it was. Refusing at connect is free;
 // diagnosing it from a turn-0 halt is not.
-constexpr uint32_t kProtoVersion = 30;  // 30 MAPSELECT (the client's marker walks to the node the host selected, live, instead of teleporting when the host arrives) + PRESS (an event's continue button, and a chest's item buttons, pressed by whoever controls that screen are pressed on the other peer too) -- and CHOICE events now flow in both directions, because the cat an event is about decides who answers it; 29 OWNERS + CLAIM (which player drives which cat, decided by the players instead of by roster order) and CHOICE carries the level-up's subject cat, because a level-up now belongs to whoever owns that cat; 28 RUNCATS -- the host's run cat-id list, so a client whose run generated its own cats (the tutorial) adopts the host's; 2 CONTROL, 3 ENTERNODE, 4 SAVEFILE, 5 epoch, 6 CATDATA, 7 INVENTORY, 8 state hash drops facing + roster cap 254, 9 peer envelope + PEERS (up to 4 players), 10 state hash gains ElementList (tiles + equipment), 11 CURSOR, 12 state hash gains live-list membership and stops hashing departed cats, 13/14/15 CURSOR churn while the pointer moved from the board to the screen, 16 CURSOR carries the cursor-art index -- the peer's pointer is now the game's own texture for the state their game is in, 17 CHOICE -- event and level-up option choices, which is what replaces RUNSTATE, 18 the per-battle epoch COUNTER becomes a u64 battle_id -- the node seed both peers already share -- so battle identity survives a peer restarting, 19 CHOICE carries the node seed it was made on -- a held choice used to have no idea which node it belonged to and could surface on a later one, 20 RUNHIST (the run-history object the event roller reads) + NODEHASH (the meta layer finally gets the per-node check the battle layer has had per turn since version 5), 21 AIM -- the range/AOE tiles the other player is aiming at, drawn on this peer by the game's own Brain::DrawAbilityAOE; cosmetic like CURSOR and hashed by nothing, 22 AIM is read from the PLAYERBRAIN'S SELECTION (PlayerBrain+0x3D8/+0x358/+0x360) instead of the cached decision, and the receiver draws the RANGE tiles as well as the AOE -- not one byte of AimMsg moved, which is exactly the kind of change version 12 established has to bump anyway, 23 the range-tile call that came with 22 is REMOVED -- sub_140138A10 applies statuses rather than drawing, so mirroring it mutated the non-owning peer's simulation and cost a run; the bump exists so a peer still running 22 cannot join and do it, 24 the highlight is back and the tiles with it, but only ever called with sub_140151CE0 -- its apply_status half -- swallowed by T_HighlightRefresh and with the whole roster's cat state fenced across the call, 25 a Move aim also shows the ATTACK RANGE from the hovered square -- the game gets those tiles by displacing the cat and moving it back, so the receiver now makes two TacticsObject::Move calls per frame inside the same state fence; not one byte of AimMsg moved, version 12's rule again, 26 STATEDUMP -- on a hash mismatch each peer sends the per-cat table its own hash was taken over, so the log that halts also names the cat and the field instead of requiring two log files side by side, 27 SAVEFILE carries `fresh` -- whether the host is (re)starting a run from the save screen or catching a peer up. A host that goes back to the menu and picks a slot again starts a NEW run, and the client used to decline that save with "already in the run": the g.applied latch is per-PROCESS and the two sends were byte-identical, so nothing on the receiving side could tell them apart, and HOSTLEFT -- the other half of that story: `fresh` handles the host STARTING a run, HOSTLEFT handles it ENDING one. Both shipped in the same unreleased version, which is the only reason they share a number
+constexpr uint32_t kProtoVersion = 31;  // 31 CURSOR carries a world point (space/wx/wy) so the pointer is right in the house whatever each player's camera is looking at, and the house begins to be shared; 30 MAPSELECT (the client's marker walks to the node the host selected, live, instead of teleporting when the host arrives) + PRESS (an event's continue button, and a chest's item buttons, pressed by whoever controls that screen are pressed on the other peer too) -- and CHOICE events now flow in both directions, because the cat an event is about decides who answers it; 29 OWNERS + CLAIM (which player drives which cat, decided by the players instead of by roster order) and CHOICE carries the level-up's subject cat, because a level-up now belongs to whoever owns that cat; 28 RUNCATS -- the host's run cat-id list, so a client whose run generated its own cats (the tutorial) adopts the host's; 2 CONTROL, 3 ENTERNODE, 4 SAVEFILE, 5 epoch, 6 CATDATA, 7 INVENTORY, 8 state hash drops facing + roster cap 254, 9 peer envelope + PEERS (up to 4 players), 10 state hash gains ElementList (tiles + equipment), 11 CURSOR, 12 state hash gains live-list membership and stops hashing departed cats, 13/14/15 CURSOR churn while the pointer moved from the board to the screen, 16 CURSOR carries the cursor-art index -- the peer's pointer is now the game's own texture for the state their game is in, 17 CHOICE -- event and level-up option choices, which is what replaces RUNSTATE, 18 the per-battle epoch COUNTER becomes a u64 battle_id -- the node seed both peers already share -- so battle identity survives a peer restarting, 19 CHOICE carries the node seed it was made on -- a held choice used to have no idea which node it belonged to and could surface on a later one, 20 RUNHIST (the run-history object the event roller reads) + NODEHASH (the meta layer finally gets the per-node check the battle layer has had per turn since version 5), 21 AIM -- the range/AOE tiles the other player is aiming at, drawn on this peer by the game's own Brain::DrawAbilityAOE; cosmetic like CURSOR and hashed by nothing, 22 AIM is read from the PLAYERBRAIN'S SELECTION (PlayerBrain+0x3D8/+0x358/+0x360) instead of the cached decision, and the receiver draws the RANGE tiles as well as the AOE -- not one byte of AimMsg moved, which is exactly the kind of change version 12 established has to bump anyway, 23 the range-tile call that came with 22 is REMOVED -- sub_140138A10 applies statuses rather than drawing, so mirroring it mutated the non-owning peer's simulation and cost a run; the bump exists so a peer still running 22 cannot join and do it, 24 the highlight is back and the tiles with it, but only ever called with sub_140151CE0 -- its apply_status half -- swallowed by T_HighlightRefresh and with the whole roster's cat state fenced across the call, 25 a Move aim also shows the ATTACK RANGE from the hovered square -- the game gets those tiles by displacing the cat and moving it back, so the receiver now makes two TacticsObject::Move calls per frame inside the same state fence; not one byte of AimMsg moved, version 12's rule again, 26 STATEDUMP -- on a hash mismatch each peer sends the per-cat table its own hash was taken over, so the log that halts also names the cat and the field instead of requiring two log files side by side, 27 SAVEFILE carries `fresh` -- whether the host is (re)starting a run from the save screen or catching a peer up. A host that goes back to the menu and picks a slot again starts a NEW run, and the client used to decline that save with "already in the run": the g.applied latch is per-PROCESS and the two sends were byte-identical, so nothing on the receiving side could tell them apart, and HOSTLEFT -- the other half of that story: `fresh` handles the host STARTING a run, HOSTLEFT handles it ENDING one. Both shipped in the same unreleased version, which is the only reason they share a number
 
 // A frame's payload may not exceed this. RUNSTATE (phase 5) is the only message
 // that will ever approach it; everything in phase 4 is under 128 bytes.
@@ -599,6 +599,17 @@ struct CursorMsg {
     // that the table's ORDER is wire format -- appending is safe, reordering is
     // a protocol change. An index we do not know draws the plain arrow.
     uint8_t  mode      = 0;
+
+    // WHERE IN THE WORLD, when the sender's screen has a camera worth naming.
+    // 0 = only the screen fraction above means anything; 1 = the house, with
+    // (wx, wy) the mouse in the House scene's world (sub_1409796D0). Each
+    // player moves their own house camera, so a fraction of the window would
+    // point at different furniture on the two machines; the receiver projects
+    // the world point through ITS camera instead, and draws nothing when it is
+    // not in the house itself.
+    uint8_t  space     = 0;
+    float    wx        = 0.0f;
+    float    wy        = 0.0f;
 };
 
 // Host -> client, every time the host enters a map node.
@@ -1116,6 +1127,9 @@ inline uint32_t enc_cursor(uint8_t* p, uint32_t cap, const CursorMsg& c) {
     memcpy(&bits, &c.nx, 4); w.u32v(bits);
     memcpy(&bits, &c.ny, 4); w.u32v(bits);
     w.u8v(c.mode);
+    w.u8v(c.space);
+    memcpy(&bits, &c.wx, 4); w.u32v(bits);
+    memcpy(&bits, &c.wy, 4); w.u32v(bits);
     return w.ok ? w.len : 0;
 }
 
@@ -1379,6 +1393,13 @@ inline bool dec_cursor(Reader& r, CursorMsg& c) {
     // the real grid bounds are only known with a live StatusMenu -- but it
     // rejects the garbage that would matter.
     if (c.on_board && (c.x < 0 || c.y < 0 || c.x > 4095 || c.y > 4095)) return false;
+    c.space = r.u8v();
+    bits    = r.u32v(); memcpy(&c.wx, &bits, 4);
+    bits    = r.u32v(); memcpy(&c.wy, &bits, 4);
+    // A world point is projected and drawn, so it gets the same treatment as
+    // the fraction: finite and within any house anyone could build.
+    if (c.space && (!(c.wx > -1e6f && c.wx < 1e6f) || !(c.wy > -1e6f && c.wy < 1e6f)))
+        return false;
     return r.ok;
 }
 

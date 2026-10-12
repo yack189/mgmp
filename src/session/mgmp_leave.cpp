@@ -58,6 +58,7 @@ struct State {
     bool broken    = false;   // the scene walk did not read as a scene list
     bool said_broken = false;
     bool printed   = false;   // the one-shot roster of loaded scenes
+    char census[512] = {};    // the last scene set logged by census()
 
     const void** director_slot = nullptr;
     void  (*button_click)(void*, bool) = nullptr;
@@ -181,9 +182,14 @@ bool read_scenes(SceneList& out) {
     return true;
 }
 
-// Which of the three "not in a run" scenes is live, or nullptr.
+// Which of the "not in the shared game" scenes is live, or nullptr.
+//
+// THE HOUSE IS NOT ON THIS LIST ANY MORE. It used to be, when co-op ended at
+// the front door: a host walking home announced HOSTLEFT and the client was
+// sent to the title screen. The house is now shared (mgmp_house), so being in
+// it is being in the session -- see house_live below.
 const char* out_scene(const SceneList& s) {
-    static const char* const kOut[] = { kScene_House, kScene_MainMenu, kScene_SaveSelect };
+    static const char* const kOut[] = { kScene_MainMenu, kScene_SaveSelect };
     for (uint32_t i = 0; i < s.count; ++i) {
         if (s.dying[i]) continue;
         for (const char* k : kOut)
@@ -206,6 +212,24 @@ void print_once(const SceneList& s) {
         off += _snprintf_s(line + off, sizeof(line) - off, _TRUNCATE, "%s%s%s",
                            i ? ", " : "", s.name[i], s.dying[i] ? "(dying)" : "");
     log_line_lvl(LogLevel::Trace, "LEAVE", "scenes loaded: %s", line);
+}
+
+// Every change of the live scene set, as one line. A map of which screen is
+// which, taken from a real session rather than from the disassembly -- the
+// house has a dozen ways out (shop, NPC offices, storage, the drawers, the
+// day's end) and this is how they get named.
+void census(const SceneList& s) {
+    char line[512];
+    line[0] = 0;
+    int  off = 0;
+    for (uint32_t i = 0; i < s.count && off < (int)sizeof(line) - 48; ++i) {
+        if (s.dying[i] || !s.name[i][0]) continue;
+        off += _snprintf_s(line + off, sizeof(line) - off, _TRUNCATE, "%s%s",
+                           off ? ", " : "", s.name[i]);
+    }
+    if (strcmp(line, g.census) == 0) return;
+    strncpy_s(g.census, line, _TRUNCATE);
+    log_line_lvl(LogLevel::Trace, "SCENES", "%s", line);
 }
 
 // Takes the reading. THE ONLY CALLERS ARE THE PUMP AND leave_on_message --
@@ -240,6 +264,14 @@ Where where_are_we(const char** out_name) {
             if (out_name) *out_name = out;
             return Where::OutOfRun;
         }
+        // The shared house is a positive reading of its own: it has no cat-id
+        // list (that belongs to an adventure), but a live House scene is as
+        // good evidence of "in the game with the other player" as one.
+        for (uint32_t i = 0; i < s.count; ++i)
+            if (!s.dying[i] && strcmp(s.name[i], kScene_House) == 0) {
+                if (out_name) *out_name = kScene_House;
+                return Where::InRun;
+            }
         return run_loaded ? Where::InRun : Where::Unknown;
     }
 
@@ -367,7 +399,7 @@ void leave_pump() {
     // without this the module's whole input was invisible, which is exactly
     // what made the first report of "quit to menu did nothing" unanswerable.
     SceneList s{};
-    if (read_scenes(s)) print_once(s);
+    if (read_scenes(s)) { print_once(s); census(s); }
     else                report_broken();
 
     const char* out = nullptr;

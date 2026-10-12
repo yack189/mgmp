@@ -50,6 +50,9 @@ enum DataSym : int {
     D_MewDirectorPtr = 0,
     D_MouseCache,
     D_ApplicationBase,
+    D_NdcRange,          // float[4]: NDC x at the left / right edge, y at the
+                         // bottom / top edge, of the content rect. The NDC a mouse
+                         // fraction of the content rect maps to (sub_140986EE0)
     D_COUNT
 };
 uintptr_t addr_of_data(DataSym d);

@@ -132,6 +132,7 @@ constexpr bool     kCursorGlTest   = false;
 constexpr bool     kCursorTrace    = false;
 constexpr uint32_t kCursorAlpha    = 100;   // the peer whose cat is deciding
 constexpr uint32_t kCursorAlphaDim = 30;    // everybody else
+constexpr uint32_t kCursorAlphaFree = 55;   // off the battle board (map, house)
 // Ink height in pixels at kCursorRefH, scaled by the content rectangle so a
 // bigger window draws a bigger cursor the way the game's own does.
 constexpr uint32_t kCursorPx       = 34;

@@ -96,4 +96,8 @@ void cursor_on_status_menu(void* status_menu);
 // happens on the next StatusMenu::update, not here.
 void cursor_on_message(uint8_t from, const CursorMsg& c);
 
+// Once a frame from the session tick: publish the pointer when no battle board
+// is up (the map, events, the house). In the house it carries world coords.
+void cursor_pump();
+
 } // namespace mgmp

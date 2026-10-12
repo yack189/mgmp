@@ -8,6 +8,7 @@
 #include "mgmp_tuning.h"
 #include "mgmp_gpak.h"
 #include "mgmp_cursor.h"
+#include "mgmp_house.h"
 #include "mgmp_log.h"
 #include "mgmp_mem.h"
 #include "mgmp_net.h"
@@ -321,6 +322,10 @@ struct Peer {
     uint8_t  owns_turn = 0;
     uint64_t at = 0;
     bool     have = false;
+    // A world point (CursorMsg::space). Re-projected through OUR camera every
+    // frame, because our camera can move while the peer's mouse does not.
+    uint8_t  space = 0;
+    float    wx = 0, wy = 0;
 };
 
 struct State {
@@ -419,8 +424,11 @@ float smoothing_alpha(double dt) {
     return (float)(1.0 - exp(-dt / tau));
 }
 
-double alpha_for(bool owns_turn) {
-    uint32_t pct = owns_turn ? tune::kCursorAlpha : tune::kCursorAlphaDim;
+// 0 / 1 are the battle's "not deciding" / "deciding"; 2 is off the board,
+// where nobody's turn it is and the pointer is simply see-through.
+double alpha_for(uint8_t owns_turn) {
+    uint32_t pct = owns_turn == 2 ? tune::kCursorAlphaFree
+                 : owns_turn      ? tune::kCursorAlpha : tune::kCursorAlphaDim;
     if (pct > 100) pct = 100;
     return (double)pct / 100.0;
 }
@@ -1385,6 +1393,16 @@ void overlay_on_swap(void* window) {
         Peer& p = g.peers[i];
         if (!p.have || now - p.at > kStaleMs) continue;
 
+        // A house pointer goes where its world point is on OUR screen, or
+        // nowhere: a peer in the house while we are in a shop is not on any
+        // furniture we can see.
+        if (p.space == 1) {
+            float fx = 0, fy = 0;
+            if (!house_world_to_frac(p.wx, p.wy, fx, fy)) { p.placed = false; continue; }
+            if (fx < -0.05f || fx > 1.05f || fy < -0.05f || fy > 1.05f) continue;  // off camera
+            p.nx = fx; p.ny = fy;
+        }
+
         // Chase the reported position. The first sample SNAPS: easing in from
         // (0,0) would send the arrow sailing across the screen the moment a
         // peer appears, and a cursor that arrives by flying in from the corner
@@ -1394,7 +1412,7 @@ void overlay_on_swap(void* window) {
         p.cy += (p.ny - p.cy) * k;
 
         draw_cursor(p.mode, p.cx, p.cy, kPeerRGB[i % kMaxPeers],
-                    (float)alpha_for(p.owns_turn != 0), w, h);
+                    (float)alpha_for(p.owns_turn), w, h);
         ++g.drawn;
     }
 
@@ -1437,6 +1455,9 @@ void overlay_on_message(uint8_t from, const CursorMsg& c) {
     p.ny = c.ny;
     p.mode = c.mode;
     p.owns_turn = c.owns_turn;
+    p.space = c.space;
+    p.wx = c.wx;
+    p.wy = c.wy;
     p.at = GetTickCount64();
     if (tune::kCursorTrace && g.traced_peer < 60) {
         trace("TRACE peer %u sent %.3f,%.3f", (unsigned)from, p.nx, p.ny);

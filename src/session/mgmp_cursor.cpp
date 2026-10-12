@@ -1,6 +1,7 @@
 // mgmp_cursor.cpp -- see mgmp_cursor.h for why this is immediate-mode and why
 // the unit on the wire is a tile.
 #include "mgmp_cursor.h"
+#include "mgmp_house.h"
 
 #include "mgmp_addresses.h"
 #include "mgmp_resolve.h"
@@ -173,6 +174,11 @@ struct State {
     // turn is only 1.0 at the default setting. Keying the restore on dimming
     // alone would leave a partly faded cursor behind forever on any other one.
     bool touched_pips = false;
+
+    // Last frame the battle HUD ticked. While it does, StatusMenu publishes;
+    // otherwise cursor_pump does, so the pointer follows the player off the
+    // board -- the map, events, the house.
+    uint64_t board_tick = 0;
 
     // Said-once diagnostics. This runs every frame of every battle; anything
     // that can be wrong here can be wrong sixty times a second.
@@ -350,6 +356,7 @@ void cursor_on_message(uint8_t from, const CursorMsg& c) {
 
 void cursor_on_status_menu(void* sm) {
     if (!sm) return;
+    g.board_tick = GetTickCount64();
 
     // The pips must be put back before anything else bails out, or a session
     // that ends mid-battle leaves the local cursor faded forever.
@@ -456,6 +463,42 @@ void cursor_on_status_menu(void* sm) {
 
         draw_peer(ui, i, p.msg);
         ++g.drawn_frames;
+    }
+}
+
+// Off the battle board: the pointer alone, every screen. In the house it also
+// carries the world point (mgmp_house), so it lands on the same furniture
+// whatever room each player's camera is showing.
+void cursor_pump() {
+    if (!g.on || !net_active()) return;
+    const uint64_t now = GetTickCount64();
+    if (now - g.board_tick < 300) return;       // the battle HUD is publishing
+
+    CursorMsg out;
+    out.battle_id = 0;
+    out.on_board  = 0;
+    out.owns_turn = 2;                          // "nobody's turn": the free alpha
+    if (!overlay_local_pointer(out.nx, out.ny, out.mode)) return;
+    double wx = 0, wy = 0;
+    if (house_mouse_world(wx, wy)) {
+        out.space = 1;
+        out.wx = (float)wx;
+        out.wy = (float)wy;
+    }
+
+    const bool moved = !g.have_sent ||
+                       out.nx != g.last_sent.nx || out.ny != g.last_sent.ny ||
+                       out.mode != g.last_sent.mode || out.space != g.last_sent.space ||
+                       out.wx != g.last_sent.wx || out.wy != g.last_sent.wy ||
+                       out.owns_turn != g.last_sent.owns_turn ||
+                       out.battle_id != g.last_sent.battle_id;
+    const uint64_t since = now - g.last_send_at;
+    if ((moved && since >= kMinSendGapMs) || since >= kHeartbeatMs) {
+        if (net_send_cursor(out)) {
+            g.last_sent    = out;
+            g.have_sent    = true;
+            g.last_send_at = now;
+        }
     }
 }
 
