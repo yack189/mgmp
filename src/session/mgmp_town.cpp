@@ -25,6 +25,15 @@ constexpr uintptr_t kImpl_DoCall = 16;
 // "map"), the std::string HouseDrawerPanel::init copies there.
 constexpr uintptr_t kImpl_Panel = 0x10;
 constexpr uintptr_t kPanel_Name = 0x88;
+// Is a drawer open: sub_140204800 walks the panel's parents (+0x68) to the root,
+// then asks the drawer manager -- the first component of type 0x44C in the
+// root's scene (sub_1400ED390: *(entity+8) is the scene, entity = root+0x18) --
+// whether its +0x58 is that root.
+constexpr uintptr_t kPanel_Parent = 0x68;
+constexpr uintptr_t kComp_Entity  = 0x18;
+constexpr uintptr_t kEntity_Scene = 0x08;
+constexpr int       kType_DrawerMgr = 0x44C;
+constexpr uintptr_t kMgr_Open     = 0x58;
 
 // NPCDialogController (CLAUDE.md, "Hook points" -> DLGUPDATE / DLGBUBBLE).
 constexpr uintptr_t kDlg_Text     = 0x48;    // the bubble's text: +0x1A8 revealing,
@@ -72,8 +81,11 @@ struct DlgPending {
     ULONGLONG at = 0;
 };
 
+using fn_scene_list = void (__fastcall*)(void* scene, int type);
+
 struct State {
     uintptr_t base = 0;
+    fn_scene_list scene_list = nullptr;
     uintptr_t cur_scene = 0;          // address of the current-scene global
 
     ClsCache  cls[64];
@@ -147,6 +159,47 @@ Cls class_of(uintptr_t vt) {
     }
     if (g.ncls < 64) g.cls[g.ncls++] = ClsCache{ vt, c };
     return c;
+}
+
+// 1 open, 0 closed, -1 could not tell.
+int drawer_open(void* impl) {
+    void* panel = nullptr;
+    if (!g.scene_list || !impl ||
+        !mem_read((const uint8_t*)impl + kImpl_Panel, &panel, sizeof(panel)) || !panel)
+        return -1;
+    for (int i = 0; i < 8; ++i) {
+        void* up = nullptr;
+        if (!mem_read((const uint8_t*)panel + kPanel_Parent, &up, sizeof(up))) return -1;
+        if (!up) break;
+        panel = up;
+    }
+    void* ent = nullptr; void* scene = nullptr; void* table = nullptr; void* list = nullptr;
+    void* data = nullptr; void* mgr = nullptr; void* open = nullptr;
+    uint32_t n = 0;
+    if (!mem_read((const uint8_t*)panel + kComp_Entity, &ent, sizeof(ent)) || !ent) return -1;
+    if (!mem_read((const uint8_t*)ent + kEntity_Scene, &scene, sizeof(scene)) || !scene) return -1;
+    g.scene_list(scene, kType_DrawerMgr);
+    if (!mem_read((const uint8_t*)scene + 0x20, &table, sizeof(table)) || !table) return -1;
+    if (!mem_read((const uint8_t*)table + (uintptr_t)kType_DrawerMgr * 0x10, &list, sizeof(list)) ||
+        !list) return -1;
+    if (!mem_read((const uint8_t*)list + 0xC, &n, sizeof(n)) || !n) return -1;
+    if (!mem_read((const uint8_t*)list + 0x10, &data, sizeof(data)) || !data) return -1;
+    if (!mem_read(data, &mgr, sizeof(mgr)) || !mgr) return -1;
+    if (!mem_read((const uint8_t*)mgr + kMgr_Open, &open, sizeof(open))) return -1;
+    return open == panel ? 1 : 0;
+}
+
+// The state a press of this drawer tab leaves it in, as TownPressMsg::want.
+uint8_t want_after_press(void* impl) {
+    const int st = drawer_open(impl);
+    return st < 0 ? 0 : (st ? 2 : 1);
+}
+
+// Already where the press wants it?
+bool drawer_there(void* impl, uint8_t want) {
+    if (!want) return false;
+    const int st = drawer_open(impl);
+    return st >= 0 && (st == 1) == (want == 1);
 }
 
 void* impl_of(void* button) {
@@ -235,10 +288,11 @@ bool run_callback(void* button) {
     return true;
 }
 
-void send_press(const Key& k, uint8_t request, bool with_rng) {
+void send_press(const Key& k, uint8_t request, bool with_rng, uint8_t want = 0) {
     TownPressMsg m{};
     fill(m, k);
     m.request = request;
+    m.want = want;
     if (with_rng) {
         if (uint64_t* st = rng_global_stream()) {
             memcpy(m.rng, st, sizeof(m.rng));
@@ -317,6 +371,7 @@ void send_dialog(uint8_t op, uint8_t cls, void* ctrl) {
 
 void town_set_base(uintptr_t base) {
     g.base = base;
+    g.scene_list = (fn_scene_list)addr_of_call(C_SceneList);
     g.cur_scene = addr_of_data(D_CurScene);
     if (!g.cur_scene)
         log_line("TOWN", "!! the current-scene global did not resolve -- the other"
@@ -354,15 +409,16 @@ bool town_on_button_click(void* button) {
     const Kind kind = kind_of(button, k, cls);
     if (kind == Kind::None) return true;
     k.ordinal = (g.cur_btn == button) ? g.cur_ord : 0;
+    const uint8_t want = cls == Cls::Drawer ? want_after_press(impl_of(button)) : 0;
 
     if (is_host()) {
-        send_press(k, 0, true);
+        send_press(k, 0, true, want);
         log_line_lvl(LogLevel::Trace, "TOWN", "-> pressed '%s' %s#%u (%s)", k.name, k.tag,
                      (unsigned)k.ordinal, kind == Kind::Way ? "the way out" : "an office");
         return true;
     }
     // A client asks; the host presses; the press comes back here.
-    send_press(k, 1, false);
+    send_press(k, 1, false, want);
     log_line("TOWN", "asked the host to press '%s'%s%s -- %s", k.name[0] ? k.name : "?",
              k.tag[0] ? " " : "", k.tag,
              kind == Kind::Way ? "both players go" : "the host runs this screen");
@@ -397,11 +453,19 @@ void town_on_button_post(void* button) {
     g.press_last = now;
     const TownPressMsg m = p.m;
     pq_pop();
+    // A drawer already where the press wants it is not pressed -- that would
+    // toggle it the other way.
+    const bool there = drawer_there(impl_of(button), m.want);
     if (m.request) {
-        // The host presses for the client, and says so like any press of its own.
-        send_press(k, 0, true);
-        log_line("TOWN", "pressing '%s' %s for the other player", k.name, k.tag);
+        // The host presses for the client, and says so like any press of its
+        // own -- even when its own drawer is already there, because the
+        // client's is not.
+        send_press(k, 0, true, m.want);
+        log_line("TOWN", "pressing '%s' %s for the other player%s", k.name, k.tag,
+                 there ? " (already so here)" : "");
+        if (there) return;
     } else {
+        if (there) return;
         if (m.has_rng)
             if (uint64_t* st = rng_global_stream()) memcpy(st, m.rng, sizeof(m.rng));
         log_line_lvl(LogLevel::Trace, "TOWN", "pressing '%s' %s#%u -- the host did",

@@ -870,6 +870,11 @@ void house_request_reload() {
 bool house_reload_pending() { return g.reload_at != 0; }
 
 bool house_pipe_done_allowed(void* impl) {
+    // On a client the stray is the host's to drive, and its arrival animation
+    // finishes whenever the host's picture of it replaces it -- typically the
+    // moment the host picks it up -- so the drawer popped open at a moment
+    // that meant nothing. The host's arrival is the one that counts.
+    if (net_active() && net_role() == NetRole::Client && g.cats_ok) return false;
     // impl+8 is the HousePipe; its slot list is *(pipe+0x100), the cat its [0].
     void* pipe = nullptr;
     void** slots = nullptr;
