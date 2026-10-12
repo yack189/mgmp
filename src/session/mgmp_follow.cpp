@@ -1,6 +1,7 @@
 // mgmp_follow.cpp -- see mgmp_follow.h.
 
 #include "mgmp_catsync.h"
+#include "mgmp_party.h"
 #include "mgmp_choice.h"
 #include "mgmp_invsync.h"
 #include "mgmp_nodehash.h"
@@ -304,6 +305,9 @@ bool follow_on_enter_node(void* map_screen, void* node, bool* sent) {
     // battle is built from the host's cats rather than from the client's stale
     // ones. Reversing these two lines reintroduces the bug this closes.
     catsync_publish("entering a node");
+    // Who drives which cat rides ahead of the node for the same reason: the
+    // client's battle split is derived from the table it holds at turn 0.
+    party_publish("entering a node");
     // ...and the other half of the same equip. Order between these two does not
     // matter the way it does against ENTERNODE -- an equip has already moved
     // the item out of the inventory and onto the cat by the time either is

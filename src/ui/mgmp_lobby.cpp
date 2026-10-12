@@ -28,6 +28,8 @@
 #include "mgmp_lockstep.h"
 #include "mgmp_leave.h"
 #include "mgmp_savefile.h"
+#include "mgmp_party.h"
+#include "mgmp_follow.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -78,6 +80,8 @@ struct Lobby {
     // session the debug panel or mgmp.json started (it shows those too, it just
     // did not cause them).
     bool started_here = false;
+
+    bool party_open = true;   // the GRUPO panel on the map, collapsible
 
     std::vector<LocalIp> ips;
     ULONGLONG ips_at = 0;
@@ -664,6 +668,86 @@ bool lobby_wants_frame() {
     return L.on_menu || L.open || net_role() != NetRole::None;
 }
 
+// --- who plays which cat (on the map) ----------------------------------------
+//
+// Until the house is shared, this is where the players split the party: one
+// row per cat in the run, a button with the owner's name, click to hand it to
+// the other player. Host-authoritative underneath (mgmp_party): the client's
+// click is a request and the row changes when the host's table comes back.
+void draw_party_panel(const Content& c) {
+    if (mode() != Mode::Hosting && mode() != Mode::Joined) return;
+    if (!follow_on_map()) return;
+    PartyRow rows[8];
+    const uint32_t n = party_rows(rows, 8);
+    if (!n) return;
+
+    char other[64] = {};
+    const bool have_other = session_other_player(other, sizeof(other));
+    if (!have_other) return;
+    const uint8_t self = net_self();
+    // The other player's peer id: whichever owner in the table is not us, or
+    // the conventional pair (host 0, client 1) before anyone has been given one.
+    uint8_t other_peer = (self == kHostPeer) ? 1 : kHostPeer;
+    for (uint32_t i = 0; i < n; ++i)
+        if (rows[i].owner != self && rows[i].owner != kNoPeer) { other_peer = rows[i].owner; break; }
+
+    const float s = c.s;
+    const float W = 300.0f * s;
+    ImGui::SetNextWindowPos(ImVec2(c.x + c.w - W - 16.0f * s, c.y + 120.0f * s));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(W, 0), ImVec2(W, c.h * 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(kPanel.x, kPanel.y, kPanel.z, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_Border, kCream);
+    ImGui::PushStyleColor(ImGuiCol_Text, kCream);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * s, 10.0f * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * s, 6.0f * s));
+    if (L.font_body) push_font(L.font_body, 17.0f * s);
+    const ImGuiWindowFlags fl = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing;
+    if (ImGui::Begin("##mgmp_grupo", nullptr, fl)) {
+        push_font(L.font_title, 20.0f * s);
+        ImGui::TextUnformatted("GRUPO");
+        ImGui::PopFont();
+        ImGui::SameLine(W - 14.0f * s - 34.0f * s);
+        if (big_button(L.party_open ? "-##grp" : "+##grp", ImVec2(30.0f * s, 24.0f * s)))
+            L.party_open = !L.party_open;
+        if (L.party_open) {
+            const bool editable = party_editable();
+            ImGui::TextDisabled(editable ? "Clic en un nombre para cambiar quién lo juega"
+                                         : "Solo se cambia en el mapa");
+            const float bw = 120.0f * s;
+            for (uint32_t i = 0; i < n; ++i) {
+                ImGui::PushID((int)i);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(rows[i].name);
+                ImGui::SameLine(W - 14.0f * s - bw);
+                const bool mine = rows[i].owner == self;
+                const char* who = rows[i].owner == kNoPeer ? "..."
+                                : mine ? session_local_name() : other;
+                ImGui::PushStyleColor(ImGuiCol_Button, mine ? kGreen : kCream);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOrange);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, kOrangeDn);
+                ImGui::PushStyleColor(ImGuiCol_Text, kInk);
+                ImGui::BeginDisabled(!editable || rows[i].owner == kNoPeer);
+                if (ImGui::Button(who, ImVec2(bw, 0)))
+                    party_request(rows[i].id, mine ? other_peer : self);
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(4);
+                ImGui::PopID();
+            }
+        }
+    }
+    ImGui::End();
+    if (L.font_body) ImGui::PopFont();
+    ImGui::PopStyleVar(6);
+    ImGui::PopStyleColor(3);
+}
+
 void lobby_draw() {
     const Content c = content();
     if (L.on_menu) {
@@ -674,7 +758,10 @@ void lobby_draw() {
         // time the menu comes back it starts closed.
         L.open = false;
     }
-    if (!L.on_menu) draw_hud(c);
+    if (!L.on_menu) {
+        draw_hud(c);
+        draw_party_panel(c);
+    }
 }
 
 } // namespace mgmp

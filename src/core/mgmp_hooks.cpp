@@ -51,6 +51,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
+#include "mgmp_party.h"
 #include "mgmp_rng.h"
 #include "mgmp_rtti.h"
 #include "mgmp_turnaction.h"
@@ -858,6 +859,7 @@ int hooks_install() {
     choice_set_base(g_base);
     savefile_set_base(g_base);
     leave_set_base(g_base);
+    party_set_base(g_base);
     overlay_set_base(g_base);
 
     int installed = 0;

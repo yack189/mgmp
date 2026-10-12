@@ -18,6 +18,7 @@
 #include "mgmp_choice.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
+#include "mgmp_party.h"
 #include "mgmp_session.h"
 #include "mgmp_ability.h"
 #include "mgmp_turnaction.h"
@@ -896,13 +897,35 @@ void snapshot_cats(void* turn_control) {
         const bool tutorial = tutorial_run_active();
         const SplitRange range = tutorial ? split_for(g.humans, 1, pos == 0 ? 0 : 1)
                                           : split_for(g.humans, P, pos);
-        const uint32_t   mine  = range.count;
+        uint32_t mine = range.count;
         if (tutorial)
             log_line("LOCKSTEP", "tutorial run -- every human cat goes to the host; %s",
                      pos == 0 ? "this peer plays the tutorial" : "this peer watches it");
 
+        // The PLAYERS' split, when the party table can decide every human cat
+        // (mgmp_party). Both peers hold the table the host sent ahead of this
+        // node, so both arrive at the same answer; verify_control checks it.
+        bool by_party = false;
+        if (!tutorial) {
+            const void* hc[kMaxCats] = {};
+            bool        mine_k[kMaxCats] = {};
+            uint32_t    h = 0;
+            for (uint32_t i = 0; i < g.cat_count; ++i)
+                if (g.human_cat[i]) hc[h++] = g.cats[i];
+            if (party_split(hc, h, mine_k)) {
+                by_party = true;
+                mine = 0;
+                uint32_t k = 0;
+                for (uint32_t i = 0; i < g.cat_count; ++i) {
+                    if (!g.human_cat[i]) continue;
+                    g.local_cat[i] = mine_k[k++];
+                    if (g.local_cat[i]) ++mine;
+                }
+            }
+        }
+
         uint32_t seen = 0;
-        for (uint32_t i = 0; i < g.cat_count; ++i) {
+        for (uint32_t i = 0; i < g.cat_count && !by_party; ++i) {
             if (!g.human_cat[i]) continue;
             g.local_cat[i] = split_owns(range, seen);
             ++seen;
@@ -2215,6 +2238,15 @@ void lockstep_pump() {
             // Which cats the run has, in order -- run state, same rule.
             case MSG_RUNCATS:
                 catsync_on_runcats(m.runcats);
+                break;
+
+            // Who drives which cat. Run state like the cats; the split reads
+            // it at the next battle's first turn boundary.
+            case MSG_OWNERS:
+                party_on_owners(m.owners);
+                break;
+            case MSG_CLAIM:
+                party_on_claim(m.from, m.claim);
                 break;
 
             // Run state as well, and not epoch-gated for the same reason.

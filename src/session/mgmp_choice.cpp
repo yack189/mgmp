@@ -2,6 +2,7 @@
 // replicating everything the choice does.
 #include "mgmp_choice.h"
 #include "mgmp_follow.h"
+#include "mgmp_party.h"
 #include "mgmp_net.h"
 #include "mgmp_config.h"
 #include "mgmp_tuning.h"
@@ -29,6 +30,7 @@ constexpr uintptr_t kEvt_OptEnd    = 232;
 constexpr uintptr_t kLvl_OptBegin  = 864;
 constexpr uintptr_t kLvl_OptEnd    = 872;
 constexpr uintptr_t kLvl_Committed = 792;   // select_option's "already chose" guard
+constexpr uintptr_t kLvl_Subject   = 160;   // the CatData* the screen levels up
 
 constexpr uintptr_t kOptStride     = 240;
 
@@ -92,6 +94,14 @@ struct State {
     uint32_t pending_count[2]    = {0, 0};
     uint32_t pending_aux[2]      = {0, 0};
     char     pending_name[2][48] = {};
+    uint64_t pending_subject[2]  = {0, 0};   // level-up: which cat it is for
+
+    // Level-up picks that arrived while another was still held. After a fight
+    // the owner can click through two cats' screens faster than this peer
+    // shows them, and the single slot above used to drop the older pick.
+    static constexpr uint32_t kLvlQueue = 8;
+    ChoiceMsg lvl_queue[kLvlQueue];
+    uint32_t  lvl_queued = 0;
     bool     pending_warned[2]   = {false, false};
 
     // Set while we drive the game's own commit path, so the hook that exists to
@@ -230,8 +240,33 @@ bool inject_level(uint32_t index) {
 }
 
 // Shared by both apply ticks.
+// The cat a level-up screen is for, by CatData id. 0 if unreadable.
+uint64_t level_subject(const void* screen) {
+    const void* cat = nullptr;
+    if (!screen || !mem_read((const uint8_t*)screen + kLvl_Subject, &cat, sizeof(cat)) || !cat)
+        return 0;
+    return party_catdata_id(cat);
+}
+
+// Does THIS peer pick this level-up? The cat's owner does (mgmp_party). A cat
+// the table does not know falls back to the old rule -- the host picks.
+bool level_is_mine(const void* screen) {
+    const uint64_t id = level_subject(screen);
+    const uint8_t who = id ? party_owner(id) : kNoPeer;
+    if (who == kNoPeer) return !g.is_client;
+    return who == net_self();
+}
+
 void apply_pending(uint8_t kind, void* screen) {
     if (!g.pending[kind]) return;
+
+    // A level-up pick belongs to ONE cat's screen. After a fight the game shows
+    // them one cat after another, and a pick for the second must not land on
+    // the first -- so wait until the screen is for the cat it names.
+    if (kind == kChoiceLevelUp && g.pending_subject[kind]) {
+        const uint64_t here = level_subject(screen);
+        if (here && here != g.pending_subject[kind]) return;
+    }
 
     // NODE IDENTITY FIRST, BEFORE THE COUNT AND BEFORE THE NAME.
     //
@@ -327,9 +362,22 @@ void apply_pending(uint8_t kind, void* screen) {
     const bool ok = (kind == kChoiceLevelUp) ? inject_level(want) : inject_event(want);
     g.pending[kind] = false;
     g.pending_warned[kind] = false;
+    if (kind == kChoiceLevelUp && g.lvl_queued) {
+        const ChoiceMsg next = g.lvl_queue[0];
+        memmove(&g.lvl_queue[0], &g.lvl_queue[1], (g.lvl_queued - 1) * sizeof(ChoiceMsg));
+        --g.lvl_queued;
+        g.pending[kind]         = true;
+        g.pending_seed[kind]    = next.node_seed;
+        g.pending_index[kind]   = next.index;
+        g.pending_count[kind]   = next.count;
+        g.pending_aux[kind]     = next.aux;
+        g.pending_subject[kind] = next.subject;
+        memcpy(g.pending_name[kind], next.name, sizeof(g.pending_name[kind]));
+        g.pending_name[kind][sizeof(g.pending_name[kind]) - 1] = '\0';
+    }
     if (ok) {
         ++g.applied;
-        log_line("CHOICE", "applied the host's %s choice: option %u/%u ('%s')",
+        log_line("CHOICE", "applied the other player's %s choice: option %u/%u ('%s')",
                  kind_name(kind), want, count, mine);
     } else {
         log_line("CHOICE", "!! failed to apply the host's %s choice %u",
@@ -371,6 +419,7 @@ void choice_init() {
     g.world_event = nullptr;
     g.level_screen = nullptr;
     g.pending[0] = g.pending[1] = false;
+    g.lvl_queued = 0;
     g.injecting = false;
     if (!g.on) { log_line("CHOICE", "choice replication disabled by net_choice = 0"); return; }
     if (g.is_client && !g.resolved) {
@@ -465,10 +514,10 @@ bool choice_on_level_select(void* screen, void* opt) {
     Guard guard;
     g.level_screen = screen;
 
-    if (g.is_client) {
+    if (!level_is_mine(screen)) {
         ++g.swallowed;
-        log_line("CHOICE", "suppressed a local level-up click -- the host owns this"
-                           " run's choices");
+        log_line("CHOICE", "suppressed a local level-up click -- the other player owns"
+                           " this cat and picks its level-up");
         return false;
     }
 
@@ -508,11 +557,12 @@ bool choice_on_level_select(void* screen, void* opt) {
     m.count = count;
     m.aux   = want_type;
     m.node_seed = follow_here_seed();
+    m.subject = level_subject(screen);
     memcpy(m.name, want_name, sizeof(m.name));
     if (net_send_choice(m)) {
         ++g.sent;
-        log_line("CHOICE", "-> level-up option %u/%u (type %u '%s')",
-                 m.index, m.count, m.aux, m.name);
+        log_line("CHOICE", "-> level-up option %u/%u (type %u '%s') for cat %016llx",
+                 m.index, m.count, m.aux, m.name, (unsigned long long)m.subject);
     }
     return true;
 }
@@ -521,7 +571,9 @@ void choice_on_level_update(void* level_screen) {
     if (!g.on || !level_screen) return;
     Guard guard;
     g.level_screen = level_screen;
-    if (!g.is_client) return;
+    // Either role may be waiting for the other's pick now: the owner of the
+    // cat decides, and that can be the client.
+    if (!g.pending[kChoiceLevelUp]) return;
 
     // select_option no-ops once LevelUpScreen+792 is set, so injecting into a
     // screen that already committed would be swallowed by the GAME rather than
@@ -544,9 +596,9 @@ void choice_on_message(const ChoiceMsg& m) {
     if (!g.on) return;
     Guard guard;
 
-    if (!g.is_client) {
-        // Same asymmetry mgmp_follow reports: the message is host -> client, so
-        // a host receiving one is talking to a peer that also believes it hosts.
+    // Events stay the host's. A level-up comes from whoever owns the cat, so
+    // the host now receives those from the client.
+    if (!g.is_client && m.kind != kChoiceLevelUp) {
         log_line("CHOICE", "!! received a %s choice while hosting -- both peers believe"
                            " they own the run", kind_name(m.kind));
         return;
@@ -566,6 +618,15 @@ void choice_on_message(const ChoiceMsg& m) {
         return;
     }
 
+    if (kind == kChoiceLevelUp && g.pending[kind] && m.subject &&
+        m.subject != g.pending_subject[kind]) {
+        if (g.lvl_queued < State::kLvlQueue) {
+            g.lvl_queue[g.lvl_queued++] = m;
+            log_line("CHOICE", "<- queued a level-up pick for cat %016llx behind the one "
+                               "still waiting", (unsigned long long)m.subject);
+            return;
+        }
+    }
     if (g.pending[kind])
         log_line("CHOICE", "!! a %s choice was still held when another arrived --"
                            " the older one (option %u) is dropped",
@@ -579,6 +640,7 @@ void choice_on_message(const ChoiceMsg& m) {
     g.pending_warned[kind] = false;
     memcpy(g.pending_name[kind], m.name, sizeof(g.pending_name[kind]));
     g.pending_name[kind][sizeof(g.pending_name[kind]) - 1] = '\0';
+    g.pending_subject[kind] = (kind == kChoiceLevelUp) ? m.subject : 0;
 
     log_line("CHOICE", "<- host chose %s option %u/%u ('%s') on node %016llx",
              kind_name(kind), m.index, m.count, g.pending_name[kind],

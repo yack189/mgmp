@@ -68,6 +68,8 @@ struct NetMsg {
     NodeHashMsg  nodehash;
     HostLeftMsg  hostleft;
     RunCatsMsg   runcats;
+    OwnersMsg    owners;
+    ClaimMsg     claim;
     HaltMsg   halt;
     char      refuse[192] = {};
 };
@@ -157,6 +159,10 @@ bool net_send_hostleft(const HostLeftMsg& m);
 // The run's cat-id list. Heap-framed like CATDATA, since a long run outgrows the
 // 512-byte stack frame the small messages use.
 bool net_send_runcats(const RunCatsMsg& m);
+// Who drives which cat (host -> client) and a request to change it (client ->
+// host). Both small; OWNERS at its 64-cat cap is ~600 bytes, so heap-framed.
+bool net_send_owners(const OwnersMsg& m);
+bool net_send_claim(const ClaimMsg& m);
 
 // The desync dump. Sent at most once per divergence, so it has no throughput
 // budget to respect and no dedupe to do -- by the time it goes out the run is

@@ -14,6 +14,7 @@
 #include "mgmp_choice.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
+#include "mgmp_party.h"
 #include "mgmp_config.h"
 #include "mgmp_hooks.h"     // hooks_install_late, for a session started from the panel
 #include "mgmp_addresses.h" // T_ButtonUpdate
@@ -190,6 +191,7 @@ void go_ready(const char* how) {
     nodehash_init();
     aim_init();
     choice_init();
+    party_init();
     cursor_init();
     overlay_init();
 }
@@ -304,6 +306,7 @@ void handle_hello(uint8_t from, const Hello& h) {
     invsync_forget();
     runhist_forget();
     catsync_publish("a peer joined or reconnected");
+    party_publish("a peer joined or reconnected");
     invsync_publish("a peer joined or reconnected");
     // The used-event list belongs in the same burst and for the same reason: a
     // peer whose process restarted has the history that was in the save, which
@@ -473,6 +476,7 @@ const char* session_last_action()     { return g.last_action; }
 void session_shutdown() {
     if (!g.started) return;
     cursor_shutdown();
+    party_shutdown();
     overlay_shutdown();
     savefile_shutdown();
     leave_shutdown();
@@ -512,6 +516,7 @@ void session_update() {
         // Watches the loaded-scene list on both roles: the host for its own
         // departure, the client for its arrival back on the menu.
         leave_pump();
+        party_pump();
         return;
     }
 

@@ -168,6 +168,8 @@ bool decode_into(const uint8_t* buf, uint32_t len, NetMsg& m) {
         case MSG_NODEHASH:  return dec_nodehash(r, m.nodehash);
         case MSG_HOSTLEFT:  return dec_hostleft(r, m.hostleft);
         case MSG_RUNCATS:   return dec_runcats(r, m.runcats);
+        case MSG_OWNERS:    return dec_owners(r, m.owners);
+        case MSG_CLAIM:     return dec_claim(r, m.claim);
         case MSG_PEERS:   return dec_peers(r, m.peers);
         case MSG_HALT:    return dec_halt(r, m.halt);
         case MSG_REFUSE:  r.str(m.refuse, sizeof(m.refuse)); return r.ok;
@@ -715,6 +717,17 @@ bool net_send_savefile(const SaveFileMsg& m) {
 bool net_send_savefile_to(uint8_t peer, const SaveFileMsg& m) {
     return send_savefile_frame(m, false, peer);
 }
+
+bool net_send_owners(const OwnersMsg& m) {
+    uint8_t* p = (uint8_t*)malloc(16 + kMaxOwned * 9);
+    if (!p) return false;
+    const uint32_t n = enc_owners(p, 16 + kMaxOwned * 9, m);
+    const bool ok = n && net_send(p, n);
+    free(p);
+    return ok;
+}
+
+bool net_send_claim(const ClaimMsg& m) { MGMP_SEND_WITH(enc_claim, m); }
 
 bool net_send_runcats(const RunCatsMsg& m) {
     const uint32_t need = runcats_frame_size(m);
