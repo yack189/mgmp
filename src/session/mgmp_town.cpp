@@ -58,7 +58,7 @@ constexpr uint32_t  kOrdSlots     = 128;
 // than leave them on it forever.
 constexpr uint64_t  kDlgValveMs   = 40000;
 
-enum class Kind : uint8_t { None, Way, Office };
+enum class Kind : uint8_t { None, Way, Office, InvOpen, Inv };
 
 // What a callback's class is, read from its own RTTI once per vtable.
 enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap };
@@ -101,6 +101,12 @@ struct State {
     Cls       cur_cls = Cls::Unknown;
 
     bool      office = false;          // the NPCOffice scene is up here
+    // The run's inventory (the CatStatus screen, opened from the map's
+    // backpack). Shared only when it was opened as a shared press -- one
+    // opened from a level-up screen exists on one machine and must not
+    // forward its presses to a peer that has no such screen.
+    bool      inv_shared = false;
+    ULONGLONG inv_since  = 0;
     bool      injecting = false;
 
     Pending   pq[kQueue];
@@ -235,19 +241,51 @@ uint64_t kind_hash(const Key& k) {
 
 // Only the office's own buttons: the house's drawers underneath stay each
 // player's own even while an office is up.
-bool in_office_scene(void* button) {
+bool scene_name(void* button, char* nm, size_t cap) {
     void* scene = nullptr;
-    char nm[16];
+    nm[0] = 0;
     return mem_read((const uint8_t*)button + kComp_Scene, &scene, sizeof(scene)) && scene &&
-           mem_read_std_string((const uint8_t*)scene + kScene_Name, nm, sizeof(nm)) &&
-           strcmp(nm, "NPCOffice") == 0;
+           mem_read_std_string((const uint8_t*)scene + kScene_Name, nm, cap);
+}
+
+bool in_office_scene(void* button) {
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "NPCOffice") == 0;
+}
+
+// The map's backpack, from the map itself -- the same button name is built on
+// the level-up screen too (another callback), and that one is a single
+// player's.
+bool is_backpack(void* button, const Key& k) {
+    if (strcmp(k.name, "Map_Backpack") != 0) return false;
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Map") == 0 &&
+           !leave_scene_live("LevelUp");
+}
+
+bool in_inventory_scene(void* button) {
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) &&
+           (strcmp(nm, "CatStatus") == 0 || strcmp(nm, "StorageItems") == 0);
 }
 
 Kind kind_of(void* button, const Key& k, Cls cls) {
     if (cls == Cls::Drawer) return strcmp(k.tag, "map") == 0 ? Kind::Way : Kind::None;
     if (cls == Cls::NpcMap) return Kind::Way;
     if (g.office && in_office_scene(button)) return Kind::Office;
+    if (is_backpack(button, k)) return Kind::InvOpen;
+    if (g.inv_shared && in_inventory_scene(button) &&
+        strncmp(k.name, "Button_PauseMenu_", 17) != 0)
+        return Kind::Inv;
     return Kind::None;
+}
+
+void inv_opened() {
+    if (!g.inv_shared)
+        log_line("TOWN", "the backpack opens for both players -- either can equip; every"
+                         " press goes through the host so both see the same");
+    g.inv_shared = true;
+    g.inv_since = GetTickCount64();
 }
 
 bool same(const TownPressMsg& m, const Key& k) {
@@ -411,6 +449,7 @@ bool town_on_button_click(void* button) {
     k.ordinal = (g.cur_btn == button) ? g.cur_ord : 0;
     const uint8_t want = cls == Cls::Drawer ? want_after_press(impl_of(button)) : 0;
 
+    if (kind == Kind::InvOpen && is_host()) inv_opened();
     if (is_host()) {
         send_press(k, 0, true, want);
         log_line_lvl(LogLevel::Trace, "TOWN", "-> pressed '%s' %s#%u (%s)", k.name, k.tag,
@@ -471,6 +510,7 @@ void town_on_button_post(void* button) {
         log_line_lvl(LogLevel::Trace, "TOWN", "pressing '%s' %s#%u -- the host did",
                      k.name, k.tag, (unsigned)k.ordinal);
     }
+    if (strcmp(k.name, "Map_Backpack") == 0) inv_opened();
     if (run_callback(button)) ++g.done;
 }
 
@@ -597,6 +637,11 @@ void town_pump() {
         }
     }
     const ULONGLONG now = GetTickCount64();
+    if (g.inv_shared && now - g.inv_since > 3000 && !leave_scene_live("CatStatus") &&
+        !leave_scene_live("StorageItems")) {
+        g.inv_shared = false;
+        log_line_lvl(LogLevel::Trace, "TOWN", "the shared backpack is closed");
+    }
     if (g.pq_n && now - g.pq[0].at > kPressDropMs) {
         ++g.dropped;
         log_line("TOWN", "!! '%s' %s never appeared on this peer in %llu s -- dropped",

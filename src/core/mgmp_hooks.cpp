@@ -608,11 +608,19 @@ char __fastcall h_HighlightRefresh(void* self) {
 fn_this o_BrainPreview = nullptr;
 static uint32_t s_preview_restores = 0;
 void __fastcall h_BrainPreview(void* self) {
+    // FACING TOO, not only the stream. The preview displaces the cat to the
+    // hovered square and back (TacticsObject::Move twice) and that turns it:
+    // measured 2026-10-12 in a boss fight, the owner's cat ended its turn facing
+    // (-1,0) where every action had said (1,0) and the other peer had (1,0);
+    // the next hit backstabbed on one machine only (hp 11 vs 13) and the run
+    // halted. Same freeze as UpdateDecision's, around the owner's own preview.
+    lockstep_preview_facing_begin(self);
     uint64_t* s = lockstep_active() ? rng_global_stream() : nullptr;
-    if (!s) { o_BrainPreview(self); return; }
+    if (!s) { o_BrainPreview(self); lockstep_preview_facing_end(); return; }
     uint64_t before[4];
     memcpy(before, s, sizeof(before));
     o_BrainPreview(self);
+    lockstep_preview_facing_end();
     if (memcmp(before, s, sizeof(before)) != 0) {
         memcpy(s, before, sizeof(before));
         // Rare enough to name, common enough not to name every time.

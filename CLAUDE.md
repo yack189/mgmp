@@ -342,6 +342,13 @@ the committed direction is written by `Ability::trigger` and
 `Character::DoAction`, which are outside it. Cost: the cat no longer visibly
 turns while you aim it.
 
+**The owner's own preview turns the cat too** (measured 2026-10-12, a boss
+fight): `PlayerBrain::update` displaces the cat to the hovered square and back,
+and the owner's cat 29 ended a turn facing `(-1,0)` where every action said
+`(1,0)` and the other peer had `(1,0)`; the next ranged hit took 5 on one peer
+and 3 on the other. `T_BrainPreview` now runs the same facing freeze as
+`T_UpdateDecision`.
+
 **Facing still cannot go in the hash, and this is not laziness.**
 `CombatAnimation::update` @ `0x1402A86F8`/`0x1402A8745` also calls `Face`, toward
 `CombatAnimation+0x110`. The *value* is deterministic, but the animation is in
