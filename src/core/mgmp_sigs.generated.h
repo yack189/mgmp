@@ -87,13 +87,17 @@ static const SigTargetDesc kTargetSigs[] = {
     // is shared; the tail pins it: mov rcx,[rsi+20h]; call SceneCamera; lea
     // rdx,[rsp+60h]; mov rcx,rax; call MouseWorld.
     { 0x001E5110, "HOUSEUPD",
-      "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 18 FF FF FF 48 81 EC A8 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 44 0F 29 90 68 FF FF FF 44 0F 29 98 58 FF FF FF 44 0F 29 A0 48 FF FF FF 44 0F 29 A8 38 FF FF FF 44 0F 29 B0 28 FF FF FF 44 0F 29 B8 18 FF FF FF 48 8B F1 E8 ? ? ? ? 48 89 85 F8 00 00 00 48 8B 4E 20 E8 ? ? ? ? 48 8D 54 24 60 48 8B C8 E8 ? ? ? ?" },
+      "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 18 FF FF FF 48 81 EC A8 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 44 0F 29 90 68 FF FF FF 44 0F 29 98 58 FF FF FF 44 0F 29 A0 48 FF FF FF 44 0F 29 A8 38 FF FF FF 44 0F 29 B0 28 FF FF FF 44 0F 29 B8 18 FF FF FF 48 8B F1 E8 ? ? ? ? 48 89 85 F8 00 00 00 48 8B 4E 20 E8 ? ? ? ? 48 8D 54 24 60 48 8B C8 E8 ? ? ? ? 48 8B 5E 18" },
     { 0x001FACC0, "HOUSECAT",
       "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 98 FD FF FF 48 81 EC 28 03 00 00 0F 29 70" },
     { 0x001FF3F0, "HOUSECATPHYS",
       "48 89 5C 24 08 57 48 81 EC 80 00 00 00 0F 29 74 24 70 0F 29" },
     { 0x009AA360, "ANIMSTATE",
       "48 89 5C 24 08 48 89 74 24 20 4C 89 44 24 18 89 54 24 10 57 48 83 EC 40" },
+    // Shares its first 40 bytes with two other functions; the tail is its own
+    // `mov rdi,rcx; xor r14d,r14d; cmp [rcx+0D9h],r14b`.
+    { 0x001FD8B0, "HOUSECATLATE",
+      "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 68 A8 48 81 EC 18 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 48 8B F9 45 33 F6 44 38 B1 D9 00 00 00" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.
@@ -166,7 +170,7 @@ static const SigDataDesc kSigData[] = {
       "48 83 EC 28 B9 50 0F 00 00 E8 ? ? ? ? 48 89 44 24 30 48 8B C8 E8 ? ? ? ? 90 48 89 05 ? ? ? ? 48 83 C4 28",
       31, 35 },  // via 0x1400256EC in sub_1400256D0
     { 0x013C5C04, "NdcRange",
-      "48 89 5C 24 08 57 48 83 EC 60 0F 29 74 24 50 48 8B DA 0F 29 7C 24 40 44 0F 29 44 24 30 44 0F 29 4C 24 20 E8 ? ? ? ? 48 8B 0D ? ? ? ? 4C 8D 44 24 7C F3 44 0F 10 05 ? ? ? ? 48 8D 54 24 78 F3 44 0F 10 0D ? ? ? ?",
+      "48 89 5C 24 08 57 48 83 EC 60 0F 29 74 24 50 48 8B DA 0F 29 7C 24 40 44 0F 29 44 24 30 44 0F 29 4C 24 20 E8 ? ? ? ? 48 8B 0D ? ? ? ? 4C 8D 44 24 7C F3 44 0F 10 05 ? ? ? ? 48 8D 54 24 78 F3 44 0F 10 0D ? ? ? ? 33 FF",
       71, 75 },  // movss xmm9,[x_lo] at 0x140986F22 in sub_140986EE0
 };
 static const int kSigDataCount = 3;

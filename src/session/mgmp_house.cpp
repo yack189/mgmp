@@ -562,6 +562,13 @@ bool house_cat_update(void* hc) {
     return false;
 }
 
+bool house_cat_late(void* hc) {
+    if (!hc || !g.cats_ok || !net_active()) return true;
+    uint64_t id = 0;
+    if (!mem_read((const uint8_t*)hc + kHC_Id, &id, sizeof(id)) || !id) return true;
+    return puppet_target(id) == nullptr;
+}
+
 bool house_cat_physics(void* phys) {
     if (!phys || !g.cats_ok || !net_active()) return true;
     // HouseCatPhysics+0x40 is its HouseCat (read off its own update).

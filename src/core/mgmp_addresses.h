@@ -93,6 +93,8 @@ enum Target : int {
                          // -- same, so a mirrored cat does not fall or drift
     T_AnimSetState,      // sub_1409AA360(Animator*, int pose, std::string name)
                          // -- a mirrored cat's own AI may not change its anim
+    T_HouseCatLate,      // glaiel::HouseCat late_update (slot 11) -- the cat-on-
+                         // cat "swat" AI; skipped for a mirrored cat
     T_COUNT
 };
 
@@ -539,6 +541,10 @@ static const TargetDesc kTargets[T_COUNT] = {
     // battle cats and UI too -- so the hook only ever acts on a house cat's
     // animator that the other peer is driving.
     { 0x009AA360, "ANIMSTATE", "Animator set state (sub_1409AA360)" },
+    // Slot 11. Picks a neighbour in the same placement area and plays "swat"
+    // at it through sub_1409AAAB0, and flags the cats it touches -- AI, so a
+    // mirrored cat must not run it any more than its update.
+    { 0x001FD8B0, "HOUSECATLATE", "glaiel::HouseCat::late_update (slot 11)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

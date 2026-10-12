@@ -70,6 +70,8 @@ void house_on_grab(uint8_t from, const HouseGrabMsg& m);
 // The hooks. Each returns true when the original should run.
 bool house_cat_update(void* house_cat);
 bool house_cat_physics(void* physics);
+bool house_cat_late(void* house_cat);   // HouseCat late_update (slot 11): the
+                                        // cat-on-cat "swat" AI; skipped likewise
 bool house_anim_allowed(void* animator, void* consumed_string);
 
 // The Button::Click hook asks this first. For now the sign that ends the day

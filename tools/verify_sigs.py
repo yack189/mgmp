@@ -45,6 +45,12 @@ blob = data[raw:raw + size]
 print(f"section {tname}: rva 0x{va:X}, {size} bytes")
 
 def to_regex(pat):
+    # The resolver refuses a pattern whose last byte is a wildcard (it adds no
+    # uniqueness), so a pattern like that never resolves in the game no matter
+    # how well it matches here. Measured 2026-10-12: HOUSEUPD and NdcRange
+    # shipped that way and were silently dead in a two-player test.
+    if pat.split()[-1] == "?":
+        raise SystemExit("pattern ends with a wildcard -- the resolver will refuse it: " + pat)
     out = b""
     for tok in pat.split():
         out += b"." if tok == "?" else re.escape(bytes([int(tok, 16)]))
