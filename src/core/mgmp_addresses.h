@@ -87,6 +87,12 @@ enum Target : int {
                          // name, for mirroring event/chest buttons between peers
     T_HouseUpdate,       // glaiel::House::update (vtable 0x140F10158 slot 10) --
                          // the house tick; source of the house camera and mouse
+    T_HouseCatUpdate,    // glaiel::HouseCat::update (vtable 0x140EFD038 slot 10)
+                         // -- skipped for a cat the OTHER peer is driving
+    T_HouseCatPhys,      // glaiel::HouseCatPhysics::update (0x140EFDFB8 slot 10)
+                         // -- same, so a mirrored cat does not fall or drift
+    T_AnimSetState,      // sub_1409AA360(Animator*, int pose, std::string name)
+                         // -- a mirrored cat's own AI may not change its anim
     T_COUNT
 };
 
@@ -518,6 +524,21 @@ static const TargetDesc kTargets[T_COUNT] = {
     // active camera), then `sub_1409796D0(cam, &mouse_world)`. It also tracks
     // which room the mouse is over (House+0x88) and frames the camera on it.
     { 0x001E5110, "HOUSEUPD",  "glaiel::House::update (slot 10)" },
+
+    // The house cat's own tick: idle animations, name tag, sounds, the AI that
+    // walks it about and sits it on furniture. HouseCat layout used by the mod:
+    //   +0x38 HouseCatPhysics*   +0x40 entity (pos +0x80/+0x88/+0x90, x-mirror
+    //   +0xB8, draw depth +0xB0/+0x68 = -(HouseCat+0xF8))   +0x68 animator
+    //   +0x80 CatData id         +0xE8 CatPlacementArea* it is in (box, beds)
+    { 0x001FACC0, "HOUSECAT",  "glaiel::HouseCat::update (slot 10)" },
+    // Gravity, the held-cat velocity estimate, collisions. +0x48/+0x50 the
+    // velocity, +0x69 grounded this frame.
+    { 0x001FF3F0, "HOUSECATPHYS", "glaiel::HouseCatPhysics::update (slot 10)" },
+    // Writes animator+0x148 (pose) and +0x170 (name; "_DEFAULT" resolves to
+    // +0xB8), then looks the clip up. Consumes the std::string. 62 callers --
+    // battle cats and UI too -- so the hook only ever acts on a house cat's
+    // animator that the other peer is driving.
+    { 0x009AA360, "ANIMSTATE", "Animator set state (sub_1409AA360)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.
@@ -606,6 +627,14 @@ enum Call : int {
     C_CameraViewProj,        // float*(Camera*, float out[16]) -- column-major
                              // view-projection; its inverse is what the line
                              // above applies to the mouse's NDC
+
+    // --- the shared house's cats (mgmp_house.cpp) -------------------------
+    C_SceneList,             // void(Scene*, int type) -- rebuilds the scene's
+                             // cached component list of that type if dirty
+    C_AnimSetState,          // the T_AnimSetState function, called to mirror
+    C_AreaAdd,               // void(CatPlacementArea*, HouseCat*) -- accept-
+                             // checked; takes the cat out of its old area
+    C_AreaRemove,            // void(CatPlacementArea*, HouseCat*)
     C_COUNT
 };
 
@@ -845,6 +874,11 @@ static const CallDesc kCalls[C_COUNT] = {
     { 0x00978330, "Scene camera (sub_140978330)" },
     { 0x009796D0, "Camera mouse->world (sub_1409796D0)" },
     { 0x009785E0, "Camera view-projection (sub_1409785E0)" },
+
+    { 0x0096B470, "Scene component list refresh (sub_14096B470)" },
+    { 0x009AA360, "Animator set state (sub_1409AA360)" },
+    { 0x002E88D0, "CatPlacementArea add (sub_1402E88D0)" },
+    { 0x002E89C0, "CatPlacementArea remove (sub_1402E89C0)" },
 };
 
 // sub_140138A10 IS NOT A DRAW ROUTINE, and it is in the table above only

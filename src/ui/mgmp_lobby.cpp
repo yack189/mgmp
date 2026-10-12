@@ -31,6 +31,7 @@
 #include "mgmp_party.h"
 #include "mgmp_follow.h"
 #include "mgmp_choice.h"
+#include "mgmp_house.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -607,6 +608,15 @@ void draw_hud(const Content& c) {
         const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
         dl->AddRectFilled(a, b, col(kPanel, 0.75f), 10.0f * s);
         dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s), col(kGreen), mine);
+    } else if (house_sign_refused_recently()) {
+        const char* msg = "Por ahora solo el host puede terminar el día o salir de la casa";
+        ImFont* ft = L.font_title ? L.font_title : fb;
+        const float bpx = 20.0f * s;
+        const ImVec2 bs = ft->CalcTextSizeA(bpx, FLT_MAX, 0.0f, msg);
+        const ImVec2 a(c.x + (c.w - bs.x) * 0.5f - 18.0f * s, c.y + 18.0f * s);
+        const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
+        dl->AddRectFilled(a, b, col(kPanel, 0.88f), 10.0f * s);
+        dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s), col(kOrange), msg);
     } else {
         // Who answers the event on screen. Same placement as the turn banner,
         // which can never be up at the same time.

@@ -16,6 +16,7 @@
 #include "mgmp_runhist.h"
 #include "mgmp_follow.h"
 #include "mgmp_choice.h"
+#include "mgmp_house.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -2225,6 +2226,14 @@ void lockstep_pump() {
             // scoped, like CHOICE.
             case MSG_PRESS:
                 choice_on_press(m.from, m.press);
+                break;
+
+            // The shared house: cosmetic-plus-placement state, not hashed.
+            case MSG_HOUSECATS:
+                house_on_cats(m.from, m.housecats);
+                break;
+            case MSG_HOUSEGRAB:
+                house_on_grab(m.from, m.housegrab);
                 break;
 
             // Also not epoch-gated: a decision-screen choice belongs to a map

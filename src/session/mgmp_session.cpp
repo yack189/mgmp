@@ -1,6 +1,7 @@
 // mgmp_session.cpp -- see mgmp_session.h.
 
 #include "mgmp_cursor.h"
+#include "mgmp_house.h"
 #include "mgmp_overlay.h"
 #include "mgmp_session.h"
 #include "mgmp_net.h"
@@ -476,6 +477,7 @@ const char* session_last_action()     { return g.last_action; }
 void session_shutdown() {
     if (!g.started) return;
     cursor_shutdown();
+    house_shutdown();
     party_shutdown();
     overlay_shutdown();
     savefile_shutdown();

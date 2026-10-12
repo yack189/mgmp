@@ -72,6 +72,8 @@ struct NetMsg {
     ClaimMsg     claim;
     MapSelectMsg mapselect;
     PressMsg     press;
+    HouseCatsMsg housecats;
+    HouseGrabMsg housegrab;
     HaltMsg   halt;
     char      refuse[192] = {};
 };
@@ -159,6 +161,8 @@ bool net_send_nodehash(const NodeHashMsg& m);
 bool net_send_hostleft(const HostLeftMsg& m);
 bool net_send_mapselect(const MapSelectMsg& m);   // host -> client
 bool net_send_press(const PressMsg& m);           // either -> other
+bool net_send_housecats(const HouseCatsMsg& m);   // either -> other
+bool net_send_housegrab(const HouseGrabMsg& m);   // either -> other
 
 // The run's cat-id list. Heap-framed like CATDATA, since a long run outgrows the
 // 512-byte stack frame the small messages use.

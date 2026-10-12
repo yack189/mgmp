@@ -130,6 +130,42 @@ enum MsgType : uint8_t {
                         // marker walks there too instead of jumping on arrival
     MSG_PRESS    =25,   // either -> other: "I pressed the button named X on
                         // node N; press yours". Event continue, chest items.
+    MSG_HOUSECATS=26,   // either -> other: where the cats this peer is
+                        // authoritative for are, and what they are doing
+    MSG_HOUSEGRAB=27,   // either -> other: "I have this cat now" / "it is
+                        // yours again" -- authority over one house cat
+};
+
+// THE HOUSE CATS, as seen by whichever peer is authoritative for each one: the
+// host for every cat, except one the client is holding or has just thrown,
+// which is the client's until it comes to rest (MSG_HOUSEGRAB). The other peer
+// does not simulate those cats at all -- it skips their HouseCat and
+// HouseCatPhysics updates and shows what arrives here (mgmp_house).
+//
+// Identity is the CatData id (HouseCat+0x80), which both peers share because
+// they loaded the same save. Positions are the entity's world position; the
+// animation is the animator's own state, (+0x148 pose, +0x170 name), which is
+// exactly what sub_1409AA360 sets.
+constexpr uint32_t kMaxHouseCats = 64;
+struct HouseCatState {
+    uint64_t id    = 0;
+    float    x = 0, y = 0, z = 0;
+    float    flip  = 1.0f;     // entity+0xB8, the sprite's x mirror
+    int32_t  depth = 0;        // HouseCat+0xF8, the draw order
+    int8_t   face  = 1;        // animator+0x14C
+    uint8_t  pose  = 0;        // animator+0x148
+    uint8_t  area  = 0xFF;     // index of HouseCat+0xE8 among the placement
+                               // areas (type 0x1D2), 0xFF = in none
+    uint8_t  held  = 0;        // being carried by the sender's mouse
+    char     anim[24] = {};    // animator+0x170
+};
+struct HouseCatsMsg {
+    uint32_t      count = 0;
+    HouseCatState cats[kMaxHouseCats];
+};
+struct HouseGrabMsg {
+    uint64_t id   = 0;
+    uint8_t  take = 0;         // 1 = the sender has it now; 0 = handed back
 };
 
 // The map selection. MapNode's click lambda (sub_140228700) does exactly two
@@ -1184,6 +1220,37 @@ inline uint32_t enc_press(uint8_t* p, uint32_t cap, const PressMsg& m) {
     return w.ok ? w.len : 0;
 }
 
+inline uint32_t housecats_frame_size(const HouseCatsMsg& m) {
+    return 16 + m.count * (8 + 5 * 4 + 4 + 1 + 24);
+}
+
+inline uint32_t enc_housecats(uint8_t* p, uint32_t cap, const HouseCatsMsg& m) {
+    if (m.count > kMaxHouseCats) return 0;
+    Writer w(p, cap);
+    w.u8v(MSG_HOUSECATS);
+    w.u32v(m.count);
+    for (uint32_t i = 0; i < m.count; ++i) {
+        const HouseCatState& c = m.cats[i];
+        uint32_t bits;
+        w.u64v(c.id);
+        memcpy(&bits, &c.x, 4);    w.u32v(bits);
+        memcpy(&bits, &c.y, 4);    w.u32v(bits);
+        memcpy(&bits, &c.z, 4);    w.u32v(bits);
+        memcpy(&bits, &c.flip, 4); w.u32v(bits);
+        w.u32v((uint32_t)c.depth);
+        w.u8v((uint8_t)c.face); w.u8v(c.pose); w.u8v(c.area); w.u8v(c.held);
+        w.str(c.anim);
+    }
+    return w.ok ? w.len : 0;
+}
+
+inline uint32_t enc_housegrab(uint8_t* p, uint32_t cap, const HouseGrabMsg& m) {
+    Writer w(p, cap);
+    w.u8v(MSG_HOUSEGRAB);
+    w.u64v(m.id); w.u8v(m.take);
+    return w.ok ? w.len : 0;
+}
+
 inline uint32_t enc_claim(uint8_t* p, uint32_t cap, const ClaimMsg& m) {
     Writer w(p, cap);
     w.u8v(MSG_CLAIM);
@@ -1437,6 +1504,34 @@ inline bool dec_press(Reader& r, PressMsg& m) {
     return r.ok;
 }
 
+inline bool dec_housecats(Reader& r, HouseCatsMsg& m) {
+    m.count = r.u32v();
+    if (!r.ok || m.count > kMaxHouseCats) return false;
+    for (uint32_t i = 0; i < m.count; ++i) {
+        HouseCatState& c = m.cats[i];
+        uint32_t bits;
+        c.id = r.u64v();
+        bits = r.u32v(); memcpy(&c.x, &bits, 4);
+        bits = r.u32v(); memcpy(&c.y, &bits, 4);
+        bits = r.u32v(); memcpy(&c.z, &bits, 4);
+        bits = r.u32v(); memcpy(&c.flip, &bits, 4);
+        c.depth = (int32_t)r.u32v();
+        c.face = (int8_t)r.u8v(); c.pose = r.u8v(); c.area = r.u8v(); c.held = r.u8v();
+        r.str(c.anim, sizeof(c.anim));
+        // Positions are written into the game's entities, so they are held to
+        // the same standard as a cursor: finite and within any house.
+        if (!(c.x > -1e6f && c.x < 1e6f) || !(c.y > -1e6f && c.y < 1e6f) ||
+            !(c.z > -1e6f && c.z < 1e6f) || !(c.flip > -16.f && c.flip < 16.f))
+            return false;
+    }
+    return r.ok;
+}
+
+inline bool dec_housegrab(Reader& r, HouseGrabMsg& m) {
+    m.id = r.u64v(); m.take = r.u8v();
+    return r.ok;
+}
+
 inline bool dec_claim(Reader& r, ClaimMsg& m) {
     m.id = r.u64v(); m.owner = r.u8v();
     return r.ok;
@@ -1508,6 +1603,8 @@ inline const char* msg_name(uint8_t t) {
         case MSG_CLAIM:   return "CLAIM";
         case MSG_MAPSELECT: return "MAPSELECT";
         case MSG_PRESS:   return "PRESS";
+        case MSG_HOUSECATS: return "HOUSECATS";
+        case MSG_HOUSEGRAB: return "HOUSEGRAB";
         default:          return "?";
     }
 }

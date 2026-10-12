@@ -198,6 +198,9 @@ void hook_defaults() {
     g_cfg.hook[T_MapNodeClick] = false;
     g_cfg.hook[T_ButtonClick]  = false;
     g_cfg.hook[T_HouseUpdate]  = false;
+    g_cfg.hook[T_HouseCatUpdate] = false;
+    g_cfg.hook[T_HouseCatPhys]   = false;
+    g_cfg.hook[T_AnimSetState]   = false;
 
     // The highlight suppressor. Solo, there is nobody to draw another player's
     // aim for, so the guard it reads can never be raised and the hook would be
@@ -277,7 +280,10 @@ void hooks_implied_by(bool net_configured) {
         if (g_cfg.net_follow) g_cfg.hook[T_MapNodeClick] = true;
         // The shared house: its tick is where the camera (and later the cats)
         // are read.
-        g_cfg.hook[T_HouseUpdate] = true;
+        g_cfg.hook[T_HouseUpdate]    = true;
+        g_cfg.hook[T_HouseCatUpdate] = true;
+        g_cfg.hook[T_HouseCatPhys]   = true;
+        g_cfg.hook[T_AnimSetState]   = true;
         if (tune::kChoice) {
             g_cfg.hook[T_ButtonClick]  = true;
             g_cfg.hook[T_ButtonUpdate] = true;

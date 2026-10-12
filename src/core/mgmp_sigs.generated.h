@@ -88,6 +88,12 @@ static const SigTargetDesc kTargetSigs[] = {
     // rdx,[rsp+60h]; mov rcx,rax; call MouseWorld.
     { 0x001E5110, "HOUSEUPD",
       "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 18 FF FF FF 48 81 EC A8 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 44 0F 29 90 68 FF FF FF 44 0F 29 98 58 FF FF FF 44 0F 29 A0 48 FF FF FF 44 0F 29 A8 38 FF FF FF 44 0F 29 B0 28 FF FF FF 44 0F 29 B8 18 FF FF FF 48 8B F1 E8 ? ? ? ? 48 89 85 F8 00 00 00 48 8B 4E 20 E8 ? ? ? ? 48 8D 54 24 60 48 8B C8 E8 ? ? ? ?" },
+    { 0x001FACC0, "HOUSECAT",
+      "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 98 FD FF FF 48 81 EC 28 03 00 00 0F 29 70" },
+    { 0x001FF3F0, "HOUSECATPHYS",
+      "48 89 5C 24 08 57 48 81 EC 80 00 00 00 0F 29 74 24 70 0F 29" },
+    { 0x009AA360, "ANIMSTATE",
+      "48 89 5C 24 08 48 89 74 24 20 4C 89 44 24 18 89 54 24 10 57 48 83 EC 40" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.
@@ -137,6 +143,14 @@ static const SigTargetDesc kCallSigs[] = {
       "48 89 5C 24 08 57 48 81 EC B0 00 00 00 48 8B FA" },
     { 0x009785E0, "Camera view-projection (sub_1409785E0)",
       "48 8B C4 53 48 81 EC 20 01 00 00" },
+    { 0x0096B470, "Scene component list refresh (sub_14096B470)",
+      "40 56 41 56 41 57 48 83 EC 40 48 8B 41 20 48 8B F1 4C 63 FA" },
+    { 0x009AA360, "Animator set state (sub_1409AA360)",
+      "48 89 5C 24 08 48 89 74 24 20 4C 89 44 24 18 89 54 24 10 57 48 83 EC 40" },
+    { 0x002E88D0, "CatPlacementArea add (sub_1402E88D0)",
+      "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 48 8B F2 48 8B 49 70 4C" },
+    { 0x002E89C0, "CatPlacementArea remove (sub_1402E89C0)",
+      "48 89 5C 24 08 57 48 83 EC 20 48 8B 01 48 8B FA 48 8B D9 FF 90 00 01 00 00 84" },
 };
 
 // Globals, recovered from a referencing instruction's own

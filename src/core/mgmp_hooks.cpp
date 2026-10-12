@@ -637,6 +637,7 @@ void __fastcall h_MapNodeClick(void* self) {
 typedef void (__fastcall* fn_click)(void* button, bool force);
 fn_click o_ButtonClick = nullptr;
 void __fastcall h_ButtonClick(void* button, bool force) {
+    if (!house_on_button_click(button)) return;
     if (!choice_on_button_click(button)) return;
     o_ButtonClick(button, force);
 }
@@ -647,6 +648,27 @@ fn_this o_HouseUpdate = nullptr;
 void __fastcall h_HouseUpdate(void* self) {
     o_HouseUpdate(self);
     house_on_update(self);
+}
+
+// The house cats. A cat the OTHER player is driving does not run its own tick
+// or physics here; mgmp_house writes their picture of it instead.
+fn_this o_HouseCatUpdate = nullptr;
+void __fastcall h_HouseCatUpdate(void* self) {
+    if (!house_cat_update(self)) return;
+    o_HouseCatUpdate(self);
+}
+fn_this o_HouseCatPhys = nullptr;
+void __fastcall h_HouseCatPhys(void* self) {
+    if (!house_cat_physics(self)) return;
+    o_HouseCatPhys(self);
+}
+// sub_1409AA360(animator, int pose, std::string name) -- consumes the string,
+// which house_anim_allowed frees itself when it refuses the call.
+typedef void (__fastcall* fn_animset)(void* animator, int pose, void* str);
+fn_animset o_AnimSetState = nullptr;
+void __fastcall h_AnimSetState(void* animator, int pose, void* str) {
+    if (!house_anim_allowed(animator, str)) return;
+    o_AnimSetState(animator, pose, str);
 }
 
 void __fastcall h_ButtonUpdate(void* self) {
@@ -818,6 +840,9 @@ const Binding kBindings[] = {
     { T_MapNodeClick,     (void*)&h_MapNodeClick,     (void**)&o_MapNodeClick },
     { T_ButtonClick,      (void*)&h_ButtonClick,      (void**)&o_ButtonClick  },
     { T_HouseUpdate,      (void*)&h_HouseUpdate,      (void**)&o_HouseUpdate  },
+    { T_HouseCatUpdate,   (void*)&h_HouseCatUpdate,   (void**)&o_HouseCatUpdate },
+    { T_HouseCatPhys,     (void*)&h_HouseCatPhys,     (void**)&o_HouseCatPhys },
+    { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 
     { T_SaveScumPenalty, (void*)&h_SaveScum, (void**)&o_SaveScum },
