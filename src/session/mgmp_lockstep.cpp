@@ -306,72 +306,77 @@ struct Guard {
 // that does not add up.
 void halt(const char* why);
 
-// Is the run the TUTORIAL? Read off the save's own property table.
+// Is the run the TUTORIAL? Asked of the save itself, through the game's own
+// property getter.
 //
-// MewDirector::SkipTutorial's body (lambda at sub_1403AF5B0 on 4127cd6a) sets
-// three save properties to 1 -- "game_began", "tutorial_skipped" and
-// "butch_box_unlocked" -- through `operator[](MewDirector+0x38, key)`, then
-// writes `[node+0x30] = 1`. That is an MSVC std::unordered_map<std::string,
-// int64>: list nodes {next, prev, key std::string @+0x10, value @+0x30}, the
-// list's sentinel at map+0x08 and its size at map+0x10. "game_began" is the
-// game's own "past the tutorial" mark, so the tutorial is running exactly while
-// it is absent or zero.
+// MewDirector::SkipTutorial's body (lambda at sub_1403AF5B0 on 4127cd6a) marks
+// the end of the tutorial by setting the save properties "game_began",
+// "tutorial_skipped" and "butch_box_unlocked" to 1. They live behind the
+// MewSaveFile embedded at MewDirector+0x38, and the read is
 //
-// An earlier attempt read MewDirector+0x6DC (what TryAbandonRun's helper
-// tests) and it was nonzero in the tutorial's first fight, so the split never
-// changed -- measured 2026-10-12. Hence the explicit validation below: a walk
-// that does not read as that table answers "not the tutorial", which is the
-// behaviour before any of this existed, and it says so once.
+//     int64 MewSaveFile::GetProperty(std::string key, int64 fallback)
+//         = sub_14022C5E0
 //
-// Both peers loaded the same save, so both read the same answer -- which is
-// what lets the split stay derived rather than negotiated.
+// -- FNV-1a of the key into the in-memory cache, and on a miss a read from the
+// sqlite file behind it (MewSaveFile+0x470). The key is BY VALUE: the callee
+// destroys it (`call 0x140052780` on its own rdx), so it is built here as an
+// SSO std::string that owns no heap and needs no freeing. MewDirector::
+// IsTutorialRunActive's helper (sub_1403AF880) calls it the same way for
+// "on_adventure".
+//
+// The first version walked that cache directly and found it EMPTY in a run
+// long past the tutorial -- it is filled on demand -- so it called every
+// battle the tutorial and handed every cat to the host. Measured 2026-10-12.
+// Asking the getter is the only reading that is right whether or not the
+// property has been touched this session.
+//
+// Pinned to this build by its first 32 bytes; a mismatch answers "not the
+// tutorial", which is the behaviour before any of this existed.
+constexpr uint32_t kRva_SaveGetProperty = 0x0022C5E0;
+static const uint8_t kSig_SaveGetProperty[32] = {
+    0x48,0x89,0x54,0x24,0x10,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0x6c,0x24,0xc9,
+    0x48,0x81,0xec,0xe0,0x00,0x00,0x00,0x49,0x8b,0xf0,0x48,0x8b,0xfa,0x48,0x8b,0xd9 };
+typedef int64_t (__fastcall* fn_get_property)(void* save, void* key_by_value, int64_t fallback);
+
+static bool call_get_property(fn_get_property fn, void* save, void* key, int64_t* out) {
+    __try { *out = fn(save, key, 0); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 static bool tutorial_run_active() {
     static const void** slot = nullptr;
-    static bool said = false;
-    if (!slot) slot = (const void**)addr_of_data(D_MewDirectorPtr);
-    if (!slot) return false;
-    const uint8_t* dir = nullptr;
+    static fn_get_property get = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        slot = (const void**)addr_of_data(D_MewDirectorPtr);
+        const uint8_t* at = (const uint8_t*)GetModuleHandleW(nullptr) + kRva_SaveGetProperty;
+        uint8_t have[32] = {};
+        if (mem_read(at, have, sizeof(have)) && memcmp(have, kSig_SaveGetProperty, 32) == 0)
+            get = (fn_get_property)at;
+        else
+            log_line("LOCKSTEP", "!! MewSaveFile::GetProperty is not where this build "
+                                 "keeps it -- the tutorial cannot be recognised, so its "
+                                 "cats will be split like any other battle");
+    }
+    if (!slot || !get) return false;
+    uint8_t* dir = nullptr;
     if (!mem_read(slot, &dir, sizeof(dir)) || !dir) return false;
 
-    const uint8_t* map = dir + 0x38;
-    const uint8_t* head = nullptr;
-    uint64_t size = 0;
-    if (!mem_read(map + 0x08, &head, sizeof(head)) || !head ||
-        !mem_read(map + 0x10, &size, sizeof(size)) || size > 100000) {
-        if (!said) { said = true;
-            log_line("LOCKSTEP", "!! the save's property table did not read -- "
-                                 "treating this as NOT the tutorial"); }
-        return false;
-    }
+    // An MSVC std::string in its short form: 16 bytes of characters, the size,
+    // then the capacity (15 = "short", nothing on the heap).
+    alignas(8) uint8_t key[32] = {};
+    memcpy(key, "game_began", 10);
+    *(uint64_t*)(key + 0x10) = 10;
+    *(uint64_t*)(key + 0x18) = 15;
 
-    const uint8_t* node = nullptr;
-    if (!mem_read(head, &node, sizeof(node))) return false;
-    uint64_t walked = 0, named = 0;
-    int64_t  began = 0;
-    bool     found = false;
-    while (node && node != head && walked <= size) {
-        ++walked;
-        char key[64];
-        if (mem_read_std_string(node + 0x10, key, sizeof(key))) {
-            ++named;
-            if (strcmp(key, "game_began") == 0) {
-                found = mem_read(node + 0x30, &began, sizeof(began));
-            }
-        }
-        if (!mem_read(node, &node, sizeof(node))) break;
-    }
-    const bool walk_ok = (node == head) && walked == size && (size == 0 || named > 0);
-    if (!walk_ok) {
-        if (!said) { said = true;
-            log_line("LOCKSTEP", "!! the save's property table walked %llu of %llu "
-                                 "entries (%llu named) -- treating this as NOT the "
-                                 "tutorial", (unsigned long long)walked,
-                     (unsigned long long)size, (unsigned long long)named); }
+    int64_t began = 0;
+    if (!call_get_property(get, dir + 0x38, key, &began)) {
+        log_line("LOCKSTEP", "!! reading game_began faulted -- treating this as NOT the tutorial");
         return false;
     }
-    log_line_lvl(LogLevel::Trace, "LOCKSTEP", "save properties: %llu, game_began %s%lld",
-                 (unsigned long long)size, found ? "= " : "absent ", (long long)began);
-    return !found || began == 0;
+    log_line_lvl(LogLevel::Trace, "LOCKSTEP", "save property game_began = %lld", (long long)began);
+    return began == 0;
 }
 
 // Defined below with the rest of the split handling; the snapshot calls it as
