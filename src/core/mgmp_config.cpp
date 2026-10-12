@@ -191,6 +191,7 @@ void hook_defaults() {
     // reason is that the preview is real feedback: a solo player watching their
     // cat turn toward the aim has nobody to diverge from.
     g_cfg.hook[T_UpdateDecision] = false;
+    g_cfg.hook[T_BrainPreview]   = false;   // a session turns it on
 
     // The highlight suppressor. Solo, there is nobody to draw another player's
     // aim for, so the guard it reads can never be raised and the hook would be
@@ -256,6 +257,11 @@ void hooks_implied_by(bool net_configured) {
         // mutation that cost a run on 2026-08-26. If this hook is ever missing,
         // the highlight must not be called at all.
         g_cfg.hook[T_HighlightRefresh] = tune::kAimPreview;
+
+        // The local player's own aim preview can draw from the simulation
+        // stream (a displaced cat's stats recomputed with an item on it). Not
+        // optional for the same reason as the facing freeze.
+        g_cfg.hook[T_BrainPreview] = true;
     }
 
     // The panel needs the frame hook one step removed: its connect buttons can

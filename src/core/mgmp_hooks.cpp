@@ -563,6 +563,26 @@ char __fastcall h_HighlightRefresh(void* self) {
     return o_HighlightRefresh(self);
 }
 
+// The local player's aim preview, with the simulation stream pinned across
+// it. Outside a battle lockstep is driving this is a load and a branch.
+fn_this o_BrainPreview = nullptr;
+static uint32_t s_preview_restores = 0;
+void __fastcall h_BrainPreview(void* self) {
+    uint64_t* s = lockstep_active() ? rng_global_stream() : nullptr;
+    if (!s) { o_BrainPreview(self); return; }
+    uint64_t before[4];
+    memcpy(before, s, sizeof(before));
+    o_BrainPreview(self);
+    if (memcmp(before, s, sizeof(before)) != 0) {
+        memcpy(s, before, sizeof(before));
+        // Rare enough to name, common enough not to name every time.
+        if ((s_preview_restores++ % 50) == 0)
+            log_line("LOCKSTEP", "the local aim preview drew from the simulation "
+                                 "stream and it was put back (%u time(s) so far)",
+                     s_preview_restores);
+    }
+}
+
 void __fastcall h_ButtonUpdate(void* self) {
     // Fires for every button in the game. Outside a combat-menu tick this is a
     // load and a branch: combatlock_on_button's first test is the scope flag.
@@ -726,6 +746,7 @@ const Binding kBindings[] = {
     { T_CombatMenuUpdate, (void*)&h_CombatMenu,   (void**)&o_CombatMenu   },
     { T_ButtonUpdate,     (void*)&h_ButtonUpdate, (void**)&o_ButtonUpdate },
     { T_HighlightRefresh, (void*)&h_HighlightRefresh, (void**)&o_HighlightRefresh },
+    { T_BrainPreview,     (void*)&h_BrainPreview,     (void**)&o_BrainPreview },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 
     { T_SaveScumPenalty, (void*)&h_SaveScum, (void**)&o_SaveScum },

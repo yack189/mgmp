@@ -76,6 +76,10 @@ enum Target : int {
     T_HighlightRefresh,  // sub_140151CE0 -- the status half of the ability
                          // highlight. Swallowed, and ONLY while this peer is
                          // drawing another player's aim. See mgmp_aim.h.
+    T_BrainPreview,      // PlayerBrain::update (vtable slot 10) -- the LOCAL
+                         // player's aim preview, which displaces the cat and
+                         // recomputes its stats; the simulation stream is
+                         // pinned across it. See h_BrainPreview.
     T_COUNT
 };
 
@@ -468,6 +472,23 @@ static const TargetDesc kTargets[T_COUNT] = {
     // draw of ANOTHER player's aim, on the peer that does not own that cat.
     // Outside that window it is one predictable branch on a global.
     { 0x00152700, "HILITE",    "ability highlight status refresh (sub_140151CE0)" },
+
+    // PlayerBrain::update -- slot 10 of the three player-brain vtables
+    // (0x140F8A628 / 0x140F8AAC8 / 0x140F8AD18 on 4127cd6a: PlayerBrain,
+    // DbgPlayerBrain, MountBrain share it). The one function that calls
+    // DrawAbilityAOE, TacticsObject::Move AND Character::recompute_stats --
+    // the owner's own preview of a Move, which displaces the cat to the
+    // hovered tile and recomputes its stats there, every frame the mouse moves.
+    //
+    // It runs only on the peer whose mouse is over the board, and it can DRAW
+    // FROM THE SIMULATION STREAM: measured 2026-10-12 with debug.record, a cat
+    // carrying an event item, host and client identical through turn 0, then
+    // the host's stream ahead of the client's at the first draw of turn 1 with
+    // no hooked draw in between -- an inline xoshiro step on the preview path,
+    // invisible to the RNG hooks and visible only as the next draw's pre-state.
+    // Pinning the stream across the whole preview is the same remedy mgmp_aim
+    // already applies to the PEER's preview; this is the local half.
+    { 0x00778DA0, "BRAINPREV", "glaiel::PlayerBrain::update (vtable slot 10)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

@@ -72,6 +72,10 @@ static const SigTargetDesc kTargetSigs[] = {
       "48 8B C4 48 89 58 10 48 89 70 18 55 57 41 55" },
     { 0x00152700, "HILITE",
       "40 53 57 48 81 EC 88 00 00 00 48 8B 01" },
+    // Added by hand 2026-10-12 (no IDA here): the full 29-byte prologue,
+    // checked unique in .text of 4127cd6a (unique from byte 20 on).
+    { 0x00778DA0, "BRAINPREV",
+      "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 F8 FD FF FF 48 81 EC C8 02 00 00" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.
