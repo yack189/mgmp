@@ -11,6 +11,11 @@ namespace mgmp {
 namespace {
 
 constexpr uint32_t kSites = 64;
+// Call-chain signatures: the first kDepth game-module return addresses above
+// the writing instruction. Counted alongside the per-site totals so a site
+// reached from two places (a decision and a per-frame display) shows as two.
+constexpr uint32_t kChains = 96;
+constexpr uint32_t kDepth  = 6;
 
 struct State {
     uint64_t* addr = nullptr;
@@ -26,6 +31,10 @@ struct State {
     uint32_t  hits[kSites] = {};
     uint32_t  other = 0;
     uint32_t  total = 0;
+
+    uintptr_t chain[kChains][kDepth] = {};
+    uint32_t  chain_hits[kChains] = {};
+    uint32_t  chains = 0;
 };
 
 State g;
@@ -44,6 +53,25 @@ LONG CALLBACK on_step(EXCEPTION_POINTERS* ep) {
         if (!g.site[i]) { g.site[i] = rip; g.hits[i] = 1; break; }
     }
     if (i == kSites) ++g.other;
+
+    // Who called it. Unwinding from inside a vectored handler walks through
+    // KiUserExceptionDispatcher into the faulting thread's own frames -- the
+    // same thing mgmp_crash relies on. Keep the first game-module frames.
+    void* fr[40] = {};
+    const USHORT n = RtlCaptureStackBackTrace(0, 40, fr, nullptr);
+    uintptr_t key[kDepth] = {};
+    uint32_t  k = 0;
+    for (USHORT j = 0; j < n && k < kDepth; ++j) {
+        const uintptr_t a = (uintptr_t)fr[j];
+        if (a >= g.base && a < g.base + 0x2000000) key[k++] = a - g.base;
+    }
+    uint32_t ci = 0;
+    for (; ci < g.chains; ++ci)
+        if (memcmp(g.chain[ci], key, sizeof(key)) == 0) { ++g.chain_hits[ci]; break; }
+    if (ci == g.chains && g.chains < kChains) {
+        memcpy(g.chain[g.chains], key, sizeof(key));
+        g.chain_hits[g.chains++] = 1;
+    }
 
     c->Dr6 = 0;
     return EXCEPTION_CONTINUE_EXECUTION;
@@ -117,6 +145,17 @@ void watch_report(uint32_t turn) {
     }
     if (g.other) _snprintf_s(line + n, sizeof(line) - n, _TRUNCATE, " (+%u more)", g.other);
     log_line("WATCH", "%s", line);
+    for (uint32_t ci = 0; ci < g.chains; ++ci) {
+        char cl[256];
+        int m = _snprintf_s(cl, sizeof(cl), _TRUNCATE, "  x%-5u", g.chain_hits[ci]);
+        for (uint32_t d = 0; d < kDepth && g.chain[ci][d] && m > 0; ++d)
+            m += _snprintf_s(cl + m, sizeof(cl) - m, _TRUNCATE, " %06llX",
+                             (unsigned long long)g.chain[ci][d]);
+        log_line("WATCH", "%s", cl);
+    }
+    memset(g.chain, 0, sizeof(g.chain));
+    memset(g.chain_hits, 0, sizeof(g.chain_hits));
+    g.chains = 0;
     memset(g.site, 0, sizeof(g.site));
     memset(g.hits, 0, sizeof(g.hits));
     g.other = g.total = 0;
