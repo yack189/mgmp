@@ -75,4 +75,26 @@ bool session_request_pending();
 // made in this process.
 const char* session_last_action();
 
+// --- player names ------------------------------------------------------------
+//
+// Purely cosmetic: the lobby's party slots and the "Es el turno de ..." banner.
+// The name rides in HELLO's `name` field, which has always been diagnostics
+// only, so nothing any peer COMPUTES changes and the protocol version does not
+// move (version 12's rule is about what a peer derives from a message; a label
+// it prints derives nothing).
+//
+// Set before hosting or joining -- the HELLO is built when the handshake runs,
+// so a name changed mid-session reaches the peer only on the next connect.
+void        session_set_local_name(const char* name);
+const char* session_local_name();
+
+// The name a peer announced in its HELLO, or "" if it has not said one yet (or
+// the id is not a member). Peer ids are the transport's, see net_peer_ids.
+const char* session_peer_name(uint8_t peer);
+
+// The first OTHER member of the session that has completed a handshake, for the
+// two-player case the lobby and the turn banner are written for. Its name is
+// copied into `out` (always NUL-terminated). False when nobody else is here.
+bool        session_other_player(char* out, size_t out_size);
+
 } // namespace mgmp

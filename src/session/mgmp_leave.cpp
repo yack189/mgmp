@@ -604,4 +604,13 @@ void leave_on_button_update(void* button) {
     g.button_click(button, false);
 }
 
+bool leave_scene_live(const char* name) {
+    if (!name || !name[0]) return false;
+    SceneList s{};
+    if (!read_scenes(s)) return false;
+    for (uint32_t i = 0; i < s.count; ++i)
+        if (!s.dying[i] && strcmp(s.name[i], name) == 0) return true;
+    return false;
+}
+
 } // namespace mgmp

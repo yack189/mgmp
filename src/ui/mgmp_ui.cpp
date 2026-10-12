@@ -21,6 +21,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_combatlock.h"
 #include "mgmp_leave.h"
+#include "mgmp_lobby.h"
 
 // Declared by imgui_impl_win32.h's owner rather than the header itself.
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
@@ -38,6 +39,11 @@ struct UI {
     bool     visible   = true;
     bool     ready     = false;   // ImGui context + backends alive
     bool     failed    = false;   // init tried and lost; do not retry every frame
+    // Whether the LAST swap ran an ImGui frame. WantCaptureMouse is only as
+    // fresh as the last NewFrame, so once frames stop (title screen left with
+    // the mouse over the lobby button) it would stay true and the WndProc
+    // would swallow the game's mouse for good. Every swallow is gated on this.
+    bool     frame_live = false;
     uint32_t toggle_vk = 0x70;
 
     HWND     hwnd      = nullptr;
@@ -589,7 +595,11 @@ LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    if (g.ready && g.visible) {
+    // Fed whenever the context exists, not only while the debug panel is open:
+    // the lobby's MULTIJUGADOR button lives on the same context and must take
+    // clicks with the panel hidden. Nothing is swallowed unless ImGui actually
+    // wants it (below), and with no ImGui window under the mouse it never does.
+    if (g.ready) {
         if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp))
             return 1;
 
@@ -608,11 +618,11 @@ LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             case WM_RBUTTONDOWN: case WM_RBUTTONUP:   case WM_MBUTTONDOWN:
             case WM_MBUTTONUP:   case WM_MOUSEWHEEL:  case WM_MOUSEHWHEEL:
             case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK:
-                if (io.WantCaptureMouse) return 1;
+                if (g.frame_live && io.WantCaptureMouse) return 1;
                 break;
             case WM_KEYDOWN: case WM_KEYUP: case WM_CHAR:
             case WM_SYSKEYDOWN: case WM_SYSKEYUP:
-                if (io.WantCaptureKeyboard) return 1;
+                if (g.frame_live && io.WantCaptureKeyboard) return 1;
                 break;
             default: break;
         }
@@ -660,6 +670,10 @@ bool bring_up() {
     ImGui::StyleColorsDark();
     ImGui::GetStyle().FontScaleMain = g.font_scale;
 
+    // The lobby's fonts go into the same atlas, AFTER the built-in one so the
+    // panel keeps the font it is laid out for.
+    lobby_setup_fonts();
+
     if (!ImGui_ImplWin32_Init(g.hwnd)) {
         log_line("UI", "!! ImGui_ImplWin32_Init failed -- the panel is OFF");
         ImGui::DestroyContext();
@@ -684,6 +698,7 @@ bool bring_up() {
 // ---------------------------------------------------------------------------
 
 void ui_init() {
+    lobby_init();
     g.enabled   = cfg().ui;
     g.visible   = cfg().ui_visible;
     g.toggle_vk = cfg().ui_key;
@@ -725,7 +740,7 @@ void ui_shutdown() {
 }
 
 bool ui_captures_input() {
-    if (!g.ready || !g.visible) return false;
+    if (!g.ready || !g.frame_live) return false;   // the lobby can hold input with the panel hidden
     const ImGuiIO& io = ImGui::GetIO();
     return io.WantCaptureMouse || io.WantCaptureKeyboard;
 }
@@ -746,7 +761,11 @@ void ui_on_swap(void* window) {
         }
     }
 
-    if (!g.visible) return;
+    // The lobby decides for itself when it has something to show (the title
+    // screen, a live session); the debug panel is the F1 toggle. A frame runs
+    // when either wants one.
+    const bool lobby = lobby_wants_frame();
+    if (!g.visible && !lobby) { g.frame_live = false; return; }
 
     if (!g.ready) {
         if (!bring_up()) { g.failed = true; return; }
@@ -757,12 +776,21 @@ void ui_on_swap(void* window) {
     // drawn because a window is collapsed.
     pump_log();
 
+    // ImGui's own pointer only where ours covers the game's: over a lobby or
+    // panel window. Everywhere else the game draws its cursor, and drawing a
+    // second one on top of it would be two arrows on the title screen.
+    ImGui::GetIO().MouseDrawCursor = g.visible || ImGui::GetIO().WantCaptureMouse;
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
-    draw_session();
-    draw_log();
+    g.frame_live = true;
+    if (lobby) lobby_draw();
+    if (g.visible) {
+        draw_session();
+        draw_log();
+    }
 
     ImGui::Render();
     // RenderDrawData backs up and restores the GL state it touches, which is

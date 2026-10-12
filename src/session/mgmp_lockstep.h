@@ -105,6 +105,11 @@ void lockstep_catchup(uint8_t peer);
 // answer comes from the roster index of whoever is actually being polled.
 bool lockstep_local_actor();
 
+// The other half, for the "Es el turno de ..." banner: the cat being polled is a
+// human cat that a PEER controls. False on AI/enemy turns, outside a battle and
+// after a halt. Same freshness as lockstep_local_actor.
+bool lockstep_peer_actor();
+
 // Does a peer -- specifically NOT this one -- own the input for this exact
 // Character? Asked by the combat-menu lock, which has a Character* in hand
 // (CombatMenu+280) and must not depend on who happens to be being polled.

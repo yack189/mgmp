@@ -125,4 +125,7 @@ const Config& config();
 // is the caller's cue to install the hooks that were skipped at load time.
 bool        config_set_role(bool host);
 
+// Back to "off" after a session the lobby started has been left. See the .cpp.
+void        config_clear_role();
+
 } // namespace mgmp

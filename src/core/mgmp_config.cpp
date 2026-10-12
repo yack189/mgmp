@@ -376,4 +376,12 @@ bool config_set_role(bool host) {
     return true;
 }
 
+void config_clear_role() {
+    // The lobby's "Salir". Hooks a session installed stay installed -- the mod
+    // is never unhooked -- but every module that asks config().net_role (the
+    // de-latched ensure_state()s) goes back to "off" and stays inert, so the
+    // rest of this process plays like the single-player game again.
+    strncpy_s(g_cfg.net_role, "off", _TRUNCATE);
+}
+
 } // namespace mgmp

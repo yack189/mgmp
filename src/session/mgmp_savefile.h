@@ -136,4 +136,10 @@ bool savefile_adventure_is_loaded();
 // is only read once a save is actually pending.
 void savefile_on_button_update(void* button);
 
+// The lobby's "Comenzar": press the main menu's Play on THIS machine, through
+// the same Button::Click the client's auto-Play uses. Honoured by the next
+// Button::update of MainMenu_Button_Play within ~3 s, then forgotten. Needs the
+// Button::update hook, which a session started from the lobby installs late.
+void savefile_request_local_play();
+
 } // namespace mgmp

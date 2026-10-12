@@ -228,6 +228,9 @@ struct State {
     // resolves a Brain back to a roster index. False during an enemy or AI
     // turn, which is correct: that turn belongs to nobody, so no cursor lights.
     bool     local_actor = false;
+    // Its mirror for the lobby's turn banner: the cat being polled is a HUMAN
+    // cat that some OTHER peer controls. Both false = an AI or enemy turn.
+    bool     peer_actor  = false;
 
     // The two directions a counterpart can arrive from; see mgmp_hashring.h.
     //
@@ -1802,6 +1805,7 @@ void lockstep_init() {
     g.stale_drops       = 0;
     g.said_stale        = false;
     g.local_actor       = false;
+    g.peer_actor        = false;
     g.state_hash_on     = false;
 
     // The control split and the barrier go with the battle, not the session,
@@ -2251,6 +2255,7 @@ bool lockstep_fill_choice(void* brain, void* out) {
     // turn rather than only the ones this function goes on to act upon. A
     // summon (kNoCat) is nobody's, same as an AI cat.
     g.local_actor = (cat != kNoCat) && g.local_cat[cat];
+    g.peer_actor  = (cat != kNoCat) && g.human_cat[cat] && !g.local_cat[cat];
     if (cat == kNoCat) return false;      // a summon: not in the snapshot, so
                                           // neither peer treats it as owned and
                                           // both let their own AI drive it.
@@ -2642,6 +2647,7 @@ void lockstep_turn_boundary(void* turn_control) {
 
 uint64_t lockstep_battle_id()  { return g.active ? g.battles.current : kNoBattle; }
 bool     lockstep_local_actor(){ return g.active && g.snapped && g.local_actor; }
+bool     lockstep_peer_actor() { return g.active && g.snapped && !g.halted && g.peer_actor; }
 
 bool lockstep_peer_owns_character(const void* character) {
     if (!g.active || !g.snapped || !character) return false;

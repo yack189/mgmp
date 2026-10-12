@@ -1,0 +1,76 @@
+# Builds mgmp on a Windows runner and publishes the result as the
+# "ultima-version" release, so a player can download a ready zip instead of
+# installing Visual Studio. A failed build pushes its log to the `ci-logs`
+# branch, where it can be read without signing in to GitHub.
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -B build -A x64 -DMGMP_BUILD_TESTS=OFF
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release *> build.log
+          $code = $LASTEXITCODE
+          Get-Content build.log
+          exit $code
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "mgmp-coop"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build\Release\mgmp_loader.exe $out\
+          Copy-Item build\Release\mgmp.dll        $out\
+          Copy-Item mgmp.json.template            $out\mgmp.json
+          Copy-Item COMO-JUGAR.md                 $out\
+          Compress-Archive -Path "$out\*" -DestinationPath mgmp-coop.zip -Force
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'   # the delete fails harmlessly on the first run
+          $short = "${{ github.sha }}".Substring(0, 7)
+          gh release delete ultima-version --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create ultima-version mgmp-coop.zip `
+            --title "Mewgenics co-op ($short)" `
+            --notes "Compilado automaticamente desde $short. Descarga mgmp-coop.zip y lee COMO-JUGAR.md." `
+            --target "${{ github.sha }}" --latest
+
+      - name: Publish build log on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build.log)) { "no build.log -- the failure was before the build step" | Out-File build.log }
+          Copy-Item build.log "$env:RUNNER_TEMP\build.log"
+          git config user.name  "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-logs
+          git rm -rf --quiet .
+          Copy-Item "$env:RUNNER_TEMP\build.log" build.log
+          "${{ github.sha }}" | Out-File commit.txt
+          git add build.log commit.txt
+          git commit -m "build log for ${{ github.sha }}"
+          git push -f origin ci-logs

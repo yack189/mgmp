@@ -16,6 +16,7 @@
 #include "mgmp_leave.h"
 #include "mgmp_config.h"
 #include "mgmp_hooks.h"     // hooks_install_late, for a session started from the panel
+#include "mgmp_addresses.h" // T_ButtonUpdate
 #include "mgmp_tuning.h"
 #include "mgmp_rng.h"
 #include "mgmp_log.h"
@@ -49,6 +50,13 @@ struct State {
     char     req_addr[64] = {};
     uint16_t req_port = 0;
     char     last_action[128] = {};
+
+    // Display names, cosmetic only -- see session_set_local_name. Indexed by
+    // the transport's peer id, which is never reused within a session, so a
+    // stale entry can only belong to a peer that has already left (and the
+    // lobby asks the roster who is here before it asks for a name).
+    char     local_name[64] = "Jugador";
+    char     peer_name[256][64] = {};
 };
 
 State g;
@@ -147,8 +155,12 @@ Hello our_hello() {
     h.proto      = kProtoVersion;
     h.gpak_hash  = g.gpak_hash;
     h.build_hash = g.build_hash;
+    // The player's own name now, where it used to be the role. The role is
+    // already in every log line that matters; the name is what the other
+    // player's lobby and turn banner show.
     _snprintf_s(h.name, sizeof(h.name), _TRUNCATE, "%s",
-                net_role() == NetRole::Host ? "host" : "client");
+                g.local_name[0] ? g.local_name
+                                : (net_role() == NetRole::Host ? "host" : "client"));
     return h;
 }
 
@@ -219,6 +231,8 @@ void handle_hello(uint8_t from, const Hello& h) {
     }
     log_line("SESSION", "peer %u '%s' accepted (proto %u)",
              (unsigned)from, h.name[0] ? h.name : "?", h.proto);
+    _snprintf_s(g.peer_name[from], sizeof(g.peer_name[from]), _TRUNCATE, "%s",
+                h.name[0] ? h.name : "?");
 
     if (net_role() != NetRole::Host) return;
 
@@ -352,6 +366,10 @@ bool begin(bool host, const char* addr, uint16_t port) {
         if (late)
             log_line("SESSION", "installed %d hook(s) that role = off had skipped",
                      late);
+        else if (hooks_is_live(T_ButtonUpdate))
+            // A second session from the lobby in the same process: the first
+            // one already installed everything, and nothing is ever unhooked.
+            log_line("SESSION", "co-op hooks already installed by an earlier session");
         else
             log_line_lvl(LogLevel::Error, "SESSION",
                          "!! no hooks could be installed late -- this session will "
@@ -469,6 +487,7 @@ void session_shutdown() {
     net_shutdown();
     g.phase = Phase::Off;
     g.started = false;
+    memset(g.peer_name, 0, sizeof(g.peer_name));
 }
 
 void session_update() {
@@ -636,5 +655,40 @@ void session_update() {
 
 bool        session_ready()  { return g.phase == Phase::Ready; }
 const char* session_status() { return g.status; }
+
+void session_set_local_name(const char* name) {
+    // Trimmed, and never empty: an empty HELLO name prints as "?" on the other
+    // side, which reads as a bug rather than as "they did not type one".
+    char buf[64] = {};
+    if (name) {
+        while (*name == ' ' || *name == '\t') ++name;
+        _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%s", name);
+        size_t n = strlen(buf);
+        while (n && (buf[n - 1] == ' ' || buf[n - 1] == '\t')) buf[--n] = 0;
+    }
+    _snprintf_s(g.local_name, sizeof(g.local_name), _TRUNCATE, "%s",
+                buf[0] ? buf : "Jugador");
+}
+
+const char* session_local_name() { return g.local_name; }
+
+const char* session_peer_name(uint8_t peer) { return g.peer_name[peer]; }
+
+bool session_other_player(char* out, size_t out_size) {
+    if (out && out_size) out[0] = 0;
+    if (!net_active()) return false;
+    uint8_t ids[kMaxPeers] = {};
+    if (!net_peer_ids(ids, kMaxPeers)) return false;
+    const uint8_t n = net_peer_count();
+    const uint8_t self = net_self();
+    for (uint8_t i = 0; i < n && i < kMaxPeers; ++i) {
+        if (ids[i] == self) continue;
+        const char* nm = g.peer_name[ids[i]];
+        if (!nm[0]) continue;              // connected, handshake not done yet
+        if (out && out_size) _snprintf_s(out, out_size, _TRUNCATE, "%s", nm);
+        return true;
+    }
+    return false;
+}
 
 } // namespace mgmp

@@ -989,7 +989,35 @@ const void* savefile_redirect_load() {
     return &g.redirect_name;
 }
 
+// The lobby's "Comenzar" -- see savefile_request_local_play. A deadline rather
+// than a flag, so a request made while the menu was not up cannot surface ten
+// minutes later the next time somebody happens to be looking at the title
+// screen.
+static ULONGLONG s_local_play_deadline = 0;
+
+void savefile_request_local_play() {
+    s_local_play_deadline = GetTickCount64() + 3000;
+}
+
 void savefile_on_button_update(void* button) {
+    // The lobby asked for Play on THIS machine. Checked before the role tests
+    // below because it is not a client action and needs no save in hand: it is
+    // the person at this keyboard pressing a button through a different door.
+    if (s_local_play_deadline && button && g.button_click) {
+        if (GetTickCount64() > s_local_play_deadline) {
+            s_local_play_deadline = 0;
+        } else {
+            char nm[64];
+            if (mem_read_std_string((const uint8_t*)button + kBtn_Name, nm, sizeof(nm)) &&
+                strcmp(nm, kBtnName_MainMenuPlay) == 0) {
+                s_local_play_deadline = 0;
+                log_line("SAVEFILE", "lobby: pressing '%s' for the host", nm);
+                g.button_click(button, false);
+                return;
+            }
+        }
+    }
+
     // THE CHEAP TESTS FIRST, AND THE ORDER IS THE POINT. This runs for every
     // button in the game on every frame, so everything above the name read is
     // a load and a branch, and g.pending is false for all of a normal session.

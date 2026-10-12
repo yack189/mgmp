@@ -112,4 +112,11 @@ void leave_status(char* out, size_t out_size);
 // because the debug panel should be able to show it.
 bool leave_in_run();
 
+// Is a scene of exactly this name loaded and NOT marked for destruction? A full
+// walk of the scene list on every call -- the caller throttles (the lobby asks a
+// few times a second, never per frame; see the note on Where in the .cpp for
+// what per-frame walks cost during a teardown). False when the walk does not
+// read as a scene list, so "not sure" never puts a menu button on screen.
+bool leave_scene_live(const char* name);
+
 } // namespace mgmp
