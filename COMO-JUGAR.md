@@ -55,5 +55,8 @@ pulsa *Crear partida*, y en la otra escribe `127.0.0.1` y pulsa *Unirse*.
 - Junto a `mgmp_loader.exe` se guarda un registro por partida,
   `mgmp_trace_FECHA-HORA.log`. Si algo sale mal, hace falta **el de las dos
   PCs** (el más reciente de cada una).
-- Si el loader dice que Steam reinició el juego, crea un archivo
-  `steam_appid.txt` junto a `Mewgenics.exe` con el número `686060` dentro.
+- El loader guarda lo que hizo en `mgmp_loader.log`, junto a él. Si algo falla,
+  su ventana se queda abierta con el error hasta que pulses Enter.
+- La primera vez, el loader crea un archivo `steam_appid.txt` junto a
+  `Mewgenics.exe`. Sirve para que Steam no reinicie el juego sin el mod; no
+  cambia nada del juego y Steam tiene que estar abierto igual.

@@ -34,6 +34,48 @@
 
 #include "json.hpp"
 
+#include <cstdarg>
+
+// --- everything the loader says also goes to mgmp_loader.log ----------------
+//
+// Double-clicking the loader gives it a console that vanishes the moment it
+// returns, so on a player's machine every message below was unreadable -- a
+// failure looked exactly like "the mod did nothing". So each line is written
+// to the console AND to a file beside the loader, and a loader that owns its
+// console waits for Enter before closing when something went wrong.
+static FILE* g_loader_log = nullptr;
+
+static int lprintf(FILE* to, const wchar_t* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vfwprintf(to, fmt, ap);
+    va_end(ap);
+    if (g_loader_log) {
+        va_start(ap, fmt);
+        vfwprintf(g_loader_log, fmt, ap);
+        va_end(ap);
+        fflush(g_loader_log);
+    }
+    return n;
+}
+#define wprintf(...)     lprintf(stdout, __VA_ARGS__)
+#define fwprintf(f, ...) lprintf((f), __VA_ARGS__)
+
+// True when this process is the only one attached to its console -- i.e. it
+// was double-clicked rather than run from a terminal someone is looking at.
+static bool owns_console() {
+    DWORD ids[4];
+    return GetConsoleProcessList(ids, 4) == 1;
+}
+
+static void pause_if_alone() {
+    if (!owns_console()) return;
+    lprintf(stdout, L"\n[!] Algo fallo -- lee el mensaje de arriba (tambien esta en "
+                    L"mgmp_loader.log).\n    Pulsa Enter para cerrar...");
+    fflush(stdout);
+    (void)getwchar();
+}
+
 namespace {
 
 void die(const wchar_t* what) {
@@ -44,6 +86,7 @@ void die(const wchar_t* what) {
     FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                    nullptr, e, 0, msg, 512, nullptr);
     fwprintf(stderr, L"[!] %s failed (%lu): %s\n", what, e, msg);
+    pause_if_alone();
     ExitProcess(1);
 }
 
@@ -466,8 +509,48 @@ bool inject(HANDLE proc, const wchar_t* dll_path) {
 
 } // namespace
 
+// SteamAPI_RestartAppIfNecessary makes a game started outside Steam exit and
+// has Steam start a fresh, un-injected copy. A steam_appid.txt beside the exe
+// turns that off (the Steam client still has to be running and still checks the
+// licence -- this only stops the relaunch). Written once, if missing; never
+// overwritten.
+static void ensure_steam_appid(const wchar_t* game) {
+    wchar_t path[MAX_PATH];
+    wcsncpy_s(path, game, _TRUNCATE);
+    wchar_t* slash = wcsrchr(path, L'\\');
+    if (!slash) return;
+    wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"steam_appid.txt");
+    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) return;
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path, L"wb") != 0 || !f) {
+        wprintf(L"[*] could not write %s (%lu) -- if Steam re-launches the game, "
+                L"the loader will try to follow it\n", path, GetLastError());
+        return;
+    }
+    fputs("686060", f);   // Mewgenics' Steam app id (store.steampowered.com/app/686060)
+    fclose(f);
+    wprintf(L"[*] wrote %s so Steam does not re-launch the game behind the mod\n", path);
+}
+
+static int real_main(int argc, wchar_t** argv);
+
 int wmain(int argc, wchar_t** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);   // progress must survive a hard exit
+    {
+        wchar_t d[MAX_PATH], lp[MAX_PATH];
+        GetModuleFileNameW(nullptr, d, MAX_PATH);
+        if (wchar_t* sl = wcsrchr(d, L'\\')) *sl = 0;
+        swprintf_s(lp, L"%s\\mgmp_loader.log", d);
+        _wfopen_s(&g_loader_log, lp, L"w, ccs=UTF-8");
+    }
+    const int rc = real_main(argc, argv);
+    if (rc != 0) pause_if_alone();
+    else wprintf(L"[+] listo -- ya puedes cerrar esta ventana si no se cerro sola.\n");
+    if (g_loader_log) fclose(g_loader_log);
+    return rc;
+}
+
+static int real_main(int argc, wchar_t** argv) {
 
     wchar_t dir[MAX_PATH];
     loader_dir(dir);
@@ -513,6 +596,8 @@ int wmain(int argc, wchar_t** argv) {
         fwprintf(stderr, L"[!] game exe not found: %s\n", game);
         return 1;
     }
+
+    ensure_steam_appid(game);
 
     // The game resolves resources.gpak relative to the working directory, so it
     // must be the game's own folder, not the loader's.
