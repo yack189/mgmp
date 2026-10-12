@@ -199,7 +199,45 @@ void __fastcall h_NextTurn(void* self) {
     log_line("NEXTTURN", "<<< turn %u dispatched", t);
 }
 
+static void* get_choice_inner(void* self, void* out);
+
+// A POLL THAT DECIDES NOTHING MUST NOT SPEND THE SIMULATION STREAM.
+//
+// An AI brain asked for its choice while the previous action's animations are
+// still playing evaluates the board (TargetOptimizer -- an inline xoshiro step
+// at 0x1408A385E, called through GetChoice -> the brain's decide -> 0x14009E620
+// -> 0x1408A4F80), draws, and answers "nothing yet". It is asked again every
+// frame until the animations end, so the number of draws is the number of
+// FRAMES. Measured 2026-10-12 with the stream write-watchpoint: 1496 such
+// writes on a 180 fps host against 1377 on a 140 fps client in the same turn,
+// every cat identical, the turn hash differing on rng alone.
+//
+// So the stream is put back after any poll that returns type 1. Only the poll
+// that actually decides keeps its draws, and that poll sees the same board and
+// the same stream on both peers. Human brains draw nothing here, so for them
+// this is a copy and a compare.
 void* __fastcall h_GetChoice(void* self, void* out) {
+    uint64_t* s = lockstep_active() ? rng_global_stream() : nullptr;
+    uint64_t before[4];
+    if (s) memcpy(before, s, sizeof(before));
+
+    void* ret = get_choice_inner(self, out);
+
+    if (s && ret) {
+        uint32_t type = 0;
+        if (mem_read(ret, &type, sizeof(type)) && type == TA_None &&
+            memcmp(before, s, sizeof(before)) != 0) {
+            memcpy(s, before, sizeof(before));
+            static uint32_t restored = 0;
+            if ((restored++ % 500) == 0)
+                log_line_lvl(LogLevel::Trace, "LOCKSTEP", "an undecided brain poll drew from the "
+                             "simulation stream and it was put back (%u so far)", restored);
+        }
+    }
+    return ret;
+}
+
+static void* get_choice_inner(void* self, void* out) {
     void* ret = o_GetChoice(self, out);
 
     // --- run B: inject the recorded decision -----------------------------
