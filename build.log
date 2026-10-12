@@ -1,0 +1,57 @@
+MSBuild version 18.10.1-1.26427.6+3cd27c13e for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule D:/a/mgmp/mgmp/third_party/minhook/CMakeLists.txt
+  buffer.c
+  hook.c
+  trampoline.c
+  hde64.c
+  Generating Code...
+  minhook.vcxproj -> D:\a\mgmp\mgmp\build\third_party\minhook\Release\minhook.x64.lib
+  Building Custom Rule D:/a/mgmp/mgmp/CMakeLists.txt
+  dllmain.cpp
+  mgmp_hooks.cpp
+  mgmp_log.cpp
+  mgmp_mem.cpp
+  mgmp_rtti.cpp
+  mgmp_config.cpp
+  mgmp_crash.cpp
+  mgmp_gpak.cpp
+  mgmp_sigscan.cpp
+  mgmp_resolve.cpp
+  mgmp_turnaction.cpp
+  mgmp_ability.cpp
+  mgmp_record.cpp
+  mgmp_rng.cpp
+  mgmp_replay.cpp
+  mgmp_net.cpp
+  mgmp_lockstep.cpp
+D:\a\mgmp\mgmp\src\net\mgmp_net.cpp(730,42): error C3861: 'MGMP_SEND_WITH': identifier not found [D:\a\mgmp\mgmp\build\mgmp.vcxproj]
+  mgmp_session.cpp
+  mgmp_follow.cpp
+  mgmp_savefile.cpp
+  Generating Code...
+  Compiling...
+  mgmp_leave.cpp
+  mgmp_catsync.cpp
+  mgmp_invsync.cpp
+  mgmp_runhist.cpp
+  mgmp_aim.cpp
+  mgmp_nodehash.cpp
+  mgmp_choice.cpp
+  mgmp_combatlock.cpp
+  mgmp_cursor.cpp
+  mgmp_overlay.cpp
+  mgmp_party.cpp
+  mgmp_ui.cpp
+  imgui.cpp
+  imgui_draw.cpp
+  imgui_tables.cpp
+  imgui_widgets.cpp
+  imgui_impl_win32.cpp
+  imgui_impl_opengl3.cpp
+  Generating Code...
+  Building Custom Rule D:/a/mgmp/mgmp/CMakeLists.txt
+  mgmp_loader.cpp
+  mgmp_loader.vcxproj -> D:\a\mgmp\mgmp\build\Release\mgmp_loader.exe
+  -- mgmp: wrote default D:/a/mgmp/mgmp/build/Release/mgmp.json
