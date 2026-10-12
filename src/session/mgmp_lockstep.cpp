@@ -2131,6 +2131,11 @@ void lockstep_pump() {
                 catsync_on_message(m.catdata);
                 break;
 
+            // Which cats the run has, in order -- run state, same rule.
+            case MSG_RUNCATS:
+                catsync_on_runcats(m.runcats);
+                break;
+
             // Run state as well, and not epoch-gated for the same reason.
             case MSG_INVENTORY:
                 invsync_on_message(m.inventory);

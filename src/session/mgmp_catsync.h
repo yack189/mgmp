@@ -63,6 +63,7 @@
 namespace mgmp {
 
 struct CatDataMsg;
+struct RunCatsMsg;
 
 // Resolves and prologue-checks the game functions this module calls. Called
 // from hooks_verify_module alongside rng_set_base, because a bad address here
@@ -96,5 +97,9 @@ void catsync_on_message(const CatDataMsg& m);
 // point invsync_apply_pending uses, and for the same two reasons: it is off the
 // battle screen, and it is still in time for whatever the node opens.
 void catsync_apply_pending(const char* why);
+
+// CLIENT: the host's run cat-id list (RUNCATS). Applied on arrival when no
+// battle is live, otherwise held for catsync_apply_pending.
+void catsync_on_runcats(const RunCatsMsg& m);
 
 } // namespace mgmp

@@ -167,6 +167,7 @@ bool decode_into(const uint8_t* buf, uint32_t len, NetMsg& m) {
         case MSG_STATEDUMP: return dec_statedump(r, m.statedump);
         case MSG_NODEHASH:  return dec_nodehash(r, m.nodehash);
         case MSG_HOSTLEFT:  return dec_hostleft(r, m.hostleft);
+        case MSG_RUNCATS:   return dec_runcats(r, m.runcats);
         case MSG_PEERS:   return dec_peers(r, m.peers);
         case MSG_HALT:    return dec_halt(r, m.halt);
         case MSG_REFUSE:  r.str(m.refuse, sizeof(m.refuse)); return r.ok;
@@ -713,6 +714,16 @@ bool net_send_savefile(const SaveFileMsg& m) {
 // client that arrives as a fresh redirect-and-load of the whole run.
 bool net_send_savefile_to(uint8_t peer, const SaveFileMsg& m) {
     return send_savefile_frame(m, false, peer);
+}
+
+bool net_send_runcats(const RunCatsMsg& m) {
+    const uint32_t need = runcats_frame_size(m);
+    uint8_t* p = (uint8_t*)malloc(need);
+    if (!p) return false;
+    const uint32_t n = enc_runcats(p, need, m);
+    const bool ok = n && net_send(p, n);
+    free(p);
+    return ok;
 }
 
 bool net_send_catdata(const CatDataMsg& m) {

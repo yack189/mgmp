@@ -64,6 +64,14 @@ struct State {
     uint32_t pend_count = 0;
 
     uint32_t pushed = 0, applied = 0, skipped = 0, deferred = 0, coalesced = 0;
+
+    // The run's cat-id LIST (RUNCATS). Host: the hash of the last list sent, so
+    // an unchanged list costs nothing. Client: the last list received, applied
+    // at the same moments the cats are.
+    uint64_t   list_sent_hash = 0;
+    RunCatsMsg list_pending{};
+    bool       list_have = false;
+    uint32_t   list_applied = 0;
 };
 
 State g;
@@ -271,6 +279,7 @@ void catsync_shutdown() {
 void catsync_forget() {
     ensure_state();
     if (!g.on || g.is_client) return;
+    g.list_sent_hash = 0;
     g.sent_count = 0;
     memset(g.sent_id,   0, sizeof(g.sent_id));
     memset(g.sent_hash, 0, sizeof(g.sent_hash));
@@ -285,6 +294,27 @@ void catsync_publish(const char* why) {
         log_line("CATSYNC", "!! could not read the run's cat list -- nothing "
                             "published (%s)", why);
         return;
+    }
+
+    // The LIST first, so the client knows which run the cats below belong to.
+    // See RunCatsMsg for the tutorial measurement that made this necessary.
+    if (rc.count <= kMaxRunCats) {
+        RunCatsMsg lm{};
+        lm.count = rc.count;
+        bool read_all = true;
+        for (uint32_t i = 0; i < rc.count; ++i)
+            if (!mem_read(&rc.ids[i], &lm.ids[i], sizeof(uint64_t))) { read_all = false; break; }
+        if (read_all) {
+            const uint64_t h = fnv1a(lm.ids, lm.count * (uint32_t)sizeof(uint64_t)) ^ lm.count;
+            if (h != g.list_sent_hash && net_send_runcats(lm)) {
+                g.list_sent_hash = h;
+                log_line("CATSYNC", "-> run cat list: %u cat(s) (%s)", lm.count, why);
+            }
+        }
+    } else {
+        log_line("CATSYNC", "!! the run has %u cats, more than RUNCATS carries (%u) -- "
+                            "the list is not published; the client keeps its own",
+                 rc.count, kMaxRunCats);
     }
 
     uint32_t sent = 0, same = 0, failed = 0;
@@ -410,9 +440,78 @@ static bool stash_pending(const CatDataMsg& m) {
 // same helper shape as mgmp_invsync.
 static bool defer_applies() { return g.is_client && config().net_follow; }
 
+// CLIENT: make this peer's run list the host's. Every id must already resolve
+// in this peer's registry (the host's CATDATA and the shared save put them
+// there) or nothing is written -- a list naming a cat this process cannot find
+// would be a crash at the next battle, which is worse than a mismatch.
+static void apply_runcats(const char* when) {
+    if (!g.list_have) return;
+    RunCats rc{};
+    if (!run_cats(rc)) return;   // no run loaded yet -- kept, tried again later
+
+    const RunCatsMsg& m = g.list_pending;
+    if (rc.count == m.count) {
+        bool same = true;
+        for (uint32_t i = 0; i < m.count && same; ++i) {
+            uint64_t id = 0;
+            same = mem_read(&rc.ids[i], &id, sizeof(id)) && id == m.ids[i];
+        }
+        if (same) { g.list_have = false; return; }
+    }
+
+    const void* dir = nullptr;
+    mem_read(g.director_slot, &dir, sizeof(dir));
+    uint32_t cap = 0;
+    if (!dir || !mem_read((const uint8_t*)dir + kDir_CatIdCount - 4, &cap, sizeof(cap)) ||
+        cap < rc.count || cap > 4096) {
+        log_line("CATSYNC", "!! could not read the run list's capacity -- the host's "
+                            "list is NOT applied (%s)", when);
+        g.list_have = false;
+        return;
+    }
+    if (m.count > cap) {
+        log_line("CATSYNC", "!! the host's run has %u cats and this peer's list only "
+                            "has room for %u -- NOT applied; the next node will "
+                            "mismatch on cats (%s)", m.count, cap, when);
+        g.list_have = false;
+        return;
+    }
+    for (uint32_t i = 0; i < m.count; ++i) {
+        void* cat = nullptr;
+        if (!safe_by_id((void*)rc.registry, m.ids[i], &cat) || !cat) {
+            log_line("CATSYNC", "!! the host's cat %016llx is not in this peer's "
+                                "registry -- the run list is NOT applied (%s)",
+                     (unsigned long long)m.ids[i], when);
+            g.list_have = false;
+            return;
+        }
+    }
+
+    // Ids first, count last: a reader between the two sees the old count over
+    // ids that are all valid cats.
+    for (uint32_t i = 0; i < m.count; ++i)
+        mem_write(&rc.ids[i], &m.ids[i], sizeof(uint64_t));
+    mem_write((uint8_t*)dir + kDir_CatIdCount, &m.count, sizeof(m.count));
+    ++g.list_applied;
+    g.list_have = false;
+    log_line("CATSYNC", "<- adopted the host's run cat list: %u cat(s), this peer "
+                        "had %u (%s)", m.count, rc.count, when);
+}
+
+void catsync_on_runcats(const RunCatsMsg& m) {
+    ensure_state();
+    if (!g.on || !g.is_client) return;
+    g.list_pending = m;
+    g.list_have = true;
+    // Same timing rule as the cats themselves: never into a live battle.
+    if (!lockstep_in_battle()) apply_runcats("on arrival");
+}
+
 void catsync_apply_pending(const char* why) {
     ensure_state();
-    if (!g.on || !g.pend_count) return;
+    if (!g.on) return;
+    apply_runcats(why);
+    if (!g.pend_count) return;
 
     const uint32_t n = g.pend_count;
     for (uint32_t i = 0; i < n; ++i) {

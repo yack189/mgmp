@@ -556,6 +556,29 @@ void draw_hud(const Content& c) {
     dl->AddCircleFilled(ImVec2(p.x + 15.0f * s, (p.y + q.y) * 0.5f), 5.0f * s, col(dot));
     dl->AddText(fb, px, ImVec2(p.x + 28.0f * s, p.y + 7.0f * s), col(kCream), line);
 
+    // A halted battle looks exactly like a cat that will not move -- the mod
+    // parks every decision on purpose once the two games disagree. Say so on
+    // screen instead of leaving the player clicking at a frozen board.
+    if (lockstep_halted()) {
+        const char* l1 = "Las partidas se desincronizaron";
+        const char* l2 = "El combate está en pausa. Sal al menú y vuelve a entrar; si se repite, "
+                         "pásale los registros a quien mantiene el mod.";
+        ImFont* ft = L.font_title ? L.font_title : fb;
+        const float p1 = 26.0f * s, p2 = 16.0f * s;
+        const float wrap = c.w * 0.55f;
+        const ImVec2 s1 = ft->CalcTextSizeA(p1, FLT_MAX, 0.0f, l1);
+        const ImVec2 s2 = fb->CalcTextSizeA(p2, FLT_MAX, wrap, l2);
+        const float bw = (s1.x > s2.x ? s1.x : s2.x) + 48.0f * s;
+        const ImVec2 a(c.x + (c.w - bw) * 0.5f, c.y + 64.0f * s);
+        const ImVec2 b(a.x + bw, a.y + s1.y + s2.y + 34.0f * s);
+        dl->AddRectFilled(a, b, col(kPanel, 0.94f), 12.0f * s);
+        dl->AddRect(a, b, col(kRed), 12.0f * s, 0, 3.0f * s);
+        dl->AddText(ft, p1, ImVec2(a.x + 24.0f * s, a.y + 10.0f * s), col(kRed), l1);
+        dl->AddText(fb, p2, ImVec2(a.x + 24.0f * s, a.y + 18.0f * s + s1.y), col(kCream),
+                    l2, nullptr, wrap);
+        return;
+    }
+
     // Whose turn. Only the OTHER player's is announced in big letters -- your
     // own turn is obvious from the game's own UI, which is waiting for you.
     if (lockstep_peer_actor()) {
