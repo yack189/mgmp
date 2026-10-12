@@ -621,6 +621,25 @@ void __fastcall h_BrainPreview(void* self) {
     }
 }
 
+// The map node's click (a std::function _Do_call; `self` is the impl, whose
+// capture+8 is the MapNode). On a client the host drives the map, so the
+// selection it would make is not made -- the host's arrives as MAPSELECT.
+fn_this o_MapNodeClick = nullptr;
+void __fastcall h_MapNodeClick(void* self) {
+    if (!follow_on_map_click(self)) return;
+    o_MapNodeClick(self);
+}
+
+// Every button press in the game. Inert unless it is an event's or a chest's
+// button in a session: then the player who controls that screen has the press
+// repeated on the other peer, and the other player's press is swallowed.
+typedef void (__fastcall* fn_click)(void* button, bool force);
+fn_click o_ButtonClick = nullptr;
+void __fastcall h_ButtonClick(void* button, bool force) {
+    if (!choice_on_button_click(button)) return;
+    o_ButtonClick(button, force);
+}
+
 void __fastcall h_ButtonUpdate(void* self) {
     // Fires for every button in the game. Outside a combat-menu tick this is a
     // load and a branch: combatlock_on_button's first test is the scope flag.
@@ -642,7 +661,9 @@ void __fastcall h_ButtonUpdate(void* self) {
     // OUT when the host has left. Same slot, same trampoline reasoning.
     leave_on_button_update(self);
 
-    // A client still reading an event the host has already left.
+    // A press the other player made on a screen they control (an event's
+    // continue, a chest's items), or a client still reading an event the host
+    // has already left.
     choice_on_button_update(self);
 }
 
@@ -785,6 +806,8 @@ const Binding kBindings[] = {
     { T_ButtonUpdate,     (void*)&h_ButtonUpdate, (void**)&o_ButtonUpdate },
     { T_HighlightRefresh, (void*)&h_HighlightRefresh, (void**)&o_HighlightRefresh },
     { T_BrainPreview,     (void*)&h_BrainPreview,     (void**)&o_BrainPreview },
+    { T_MapNodeClick,     (void*)&h_MapNodeClick,     (void**)&o_MapNodeClick },
+    { T_ButtonClick,      (void*)&h_ButtonClick,      (void**)&o_ButtonClick  },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 
     { T_SaveScumPenalty, (void*)&h_SaveScum, (void**)&o_SaveScum },

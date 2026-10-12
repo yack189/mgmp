@@ -517,6 +517,7 @@ void session_update() {
         // departure, the client for its arrival back on the menu.
         leave_pump();
         party_pump();
+        choice_pump();
         return;
     }
 

@@ -35,6 +35,21 @@ constexpr uintptr_t kMap_NodeData  = 128;
 constexpr uintptr_t kNode_Seed = 0x118;
 constexpr uintptr_t kNode_Type = 0x138;
 
+// The map marker and its two node slots -- see read_marker_node below for the
+// readings. MapScreen+0x1E7 is the byte the click lambda writes next to the
+// selection (0 on a plain click, 1 when it came through the `home` popup).
+constexpr uintptr_t kMap_Marker      = 0xA0;
+constexpr uintptr_t kMarker_AtNode   = 0x50;
+constexpr uintptr_t kMarker_Selected = 0x60;
+constexpr uintptr_t kMap_SelFlag     = 0x1E7;
+
+// How long the client lets its own marker finish walking to a node the host
+// has already entered before entering it directly. The two walks start within
+// a network round trip of each other, so this only ever matters when the
+// client's map was not ticking when the selection arrived (still in a battle,
+// still on an event).
+constexpr uint64_t kWalkGraceMs = 6000;
+
 // MapNode::str_to_type, in enum order. 1 and 18 are three-character names whose
 // string constants IDA did not render; they are not battle types and nothing
 // here depends on knowing them.
@@ -106,6 +121,21 @@ struct State {
     uint32_t here_count     = 0;
     uint32_t here_type      = 0;
     uint64_t here_seed      = 0;
+
+    // --- the marker mirror (see follow_on_map_click in the header) ---------
+    void*     sent_sel      = nullptr;   // HOST: last selection published
+    bool      sel_pending   = false;     // CLIENT: a MAPSELECT not applied yet
+    uint32_t  sel_index     = 0;
+    uint32_t  sel_count     = 0;
+    uint64_t  sel_seed      = 0;
+    uint8_t   sel_flag      = 0;
+    bool      sel_warned    = false;
+    // CLIENT: the marker reached this node and called EnterNode before the
+    // host's ENTERNODE for it had arrived. That entry was swallowed, so the
+    // follow path must not wait for an arrival that has already happened.
+    void*     arrived       = nullptr;
+    uint32_t  natural       = 0;         // entries the marker made by itself
+    uint32_t  clicks_eaten  = 0;
 
     uint32_t entered        = 0;         // nodes followed, for the shutdown line
     uint32_t published      = 0;
@@ -193,6 +223,9 @@ void follow_init() {
     g.is_client = (net_role() == NetRole::Client);
     g.map       = nullptr;
     pending_clear();
+    g.sent_sel    = nullptr;
+    g.sel_pending = false;
+    g.arrived     = nullptr;
     if (!g.on) { log_line("FOLLOW", "map following disabled by net_follow = 0"); return; }
     log_line_lvl(LogLevel::Trace, "FOLLOW", "armed -- %s",
              g.is_client ? "following the host's map choices; local map input is suppressed"
@@ -211,8 +244,9 @@ void follow_init() {
 void follow_shutdown() {
     if (!g.on) return;
     log_line_lvl(LogLevel::Trace, "FOLLOW",
-             "done: %u published, %u followed, %u local click(s) suppressed",
-             g.published, g.entered, g.suppressed);
+             "done: %u published, %u followed (%u by the marker's own walk), %u local"
+             " click(s) suppressed, %u map click(s) swallowed",
+             g.published, g.entered, g.natural, g.suppressed, g.clicks_eaten);
     g.on = false;
     if (g.cs_ready) { DeleteCriticalSection(&g.cs); g.cs_ready = false; }
 }
@@ -253,6 +287,59 @@ void remember_node(uint32_t index, uint32_t count, uint32_t type, uint64_t seed)
     if (moved) nodehash_on_node(seed, index);
 }
 
+// The client's half of entering a node the host entered, shared by the two
+// ways it happens: the follow path calling EnterNode directly, and the marker
+// arriving by itself after a MAPSELECT walked it there. Called with the Guard
+// held and the node already popped off the queue.
+static void follow_into(uint32_t entering, uint32_t count, uint32_t type, uint64_t seed,
+                 const char* how) {
+    ++g.entered;
+    g.arrived = nullptr;
+    log_line("FOLLOW", "%s node %u (%s)%s", how,
+             entering, node_type_name(type),
+             pending_any() ? " -- more nodes still queued" : "");
+
+    // Battle identity, established without negotiating anything: this is the
+    // same node the host entered, so `seed` is the same 64 bits it read. The
+    // host does the matching call in follow_on_enter_node. Note this is the
+    // CLIENT's only chance to make it -- the follow path calls o_EnterNode, the
+    // MinHook trampoline, which bypasses the h_EnterNode detour entirely.
+    lockstep_enter_battle(seed);
+
+    // Everything the host published for this node lands HERE, and it must land
+    // BEFORE remember_node, which is where the meta hash is taken.
+    //
+    // Two separate reasons, and both were measured wrong on 2026-08-26.
+    //
+    // The apply point itself: this is the last moment before EnterNode, so it
+    // is still in time for the battle or shop the node is about to open; and it
+    // is inside MapScreen::update, so the inventory apply's clear-and-rebuild
+    // cannot free Equipment out from under an inventory screen this peer had
+    // open when the host clicked. See the note above invsync_apply_pending.
+    //
+    // The ORDER: the host takes its node hash after publishing, so the hash
+    // describes the run it just pushed. With these calls below remember_node
+    // the client hashed the run it had BEFORE the push -- one node stale --
+    // and reported an inventory mismatch that was entirely ours. That is
+    // exactly the "a hash whose two halves are computed at different points in
+    // the frame compares two different things" failure remember_node's own
+    // comment warns about.
+    invsync_apply_pending("about to follow the host into a node");
+    catsync_apply_pending("about to follow the host into a node");
+    runhist_apply_pending("about to follow the host into a node");
+
+    remember_node(entering, count, type, seed);
+
+    // A shift-held EnterNode takes a completely different branch (the very
+    // first thing it does is SDL_GetScancodeFromKey(SDLK_LSHIFT) and, if down,
+    // tail-calls sub_1403923F0 instead). That is local keyboard state, so the
+    // client would diverge from the host purely by holding a key. Cheap to
+    // notice, so say so rather than let it be mysterious.
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        log_line("FOLLOW", "!! LEFT SHIFT is down -- EnterNode branches on it and"
+                           " this peer will not take the host's path");
+}
+
 bool follow_on_enter_node(void* map_screen, void* node, bool* sent) {
     if (sent) *sent = false;
     if (!g.on || !net_active() || !map_screen || !node) return true;
@@ -271,10 +358,34 @@ bool follow_on_enter_node(void* map_screen, void* node, bool* sent) {
     // no amount of battle-layer lockstep can recover from. Swallowing rather
     // than disabling the UI keeps the change to one function.
     if (g.is_client) {
+        // The marker got here by itself -- walked by a MAPSELECT -- and the
+        // host has already entered this very node. Let the game's own call
+        // through: it is the same EnterNode the follow path would make, at the
+        // moment the host made it, instead of a jump after the walk. Every
+        // check the follow path makes is made here too; anything short of a
+        // full match falls back to it.
+        if (known && pending_any() && !config().net_follow_delay_ms &&
+            !choice_event_open()) {
+            State::PendingNode& p = pending_front();
+            uint32_t count = 0; void* data = nullptr;
+            read_nodes(map_screen, count, data);
+            const uint64_t seed = node_seed0(node);
+            if (p.index == index && (!p.seed || p.seed == seed) &&
+                (!p.count || p.count == count)) {
+                pending_pop();
+                ++g.natural;
+                follow_into(index, count, type, seed, "the marker walked into");
+                return true;
+            }
+        }
+        // Arrived ahead of the host's ENTERNODE (or somewhere the host did not
+        // go). Swallowed as before; remembered so the follow path does not then
+        // wait for a walk that is already over.
+        if (known) g.arrived = node;
         ++g.suppressed;
-        log_line("FOLLOW", "suppressed local map input: node %u (%s) -- the host"
-                           " drives the run",
-                 known ? index : 0xFFFFFFFFu, node_type_name(type));
+        log_line("FOLLOW", "held the marker's arrival at node %u (%s) -- entering"
+                           " it waits for the host", known ? index : 0xFFFFFFFFu,
+                 node_type_name(type));
         return false;
     }
 
@@ -400,9 +511,8 @@ uint64_t follow_here_seed() { return g.have_here ? g.here_seed : 0; }
 // MapScreen+0x80, so a wrong offset yields "unknown" instead of a confident
 // wrong number -- the same rule the per-turn state hash follows. That is what
 // makes reading two undocumented slots an acceptable risk here.
-constexpr uintptr_t kMap_Marker      = 0xA0;
-constexpr uintptr_t kMarker_AtNode   = 0x50;
-constexpr uintptr_t kMarker_Selected = 0x60;
+// kMap_Marker / kMarker_AtNode / kMarker_Selected are defined at the top of
+// the file; the marker mirror writes the same slots.
 
 bool read_marker_node(uintptr_t slot, uint32_t& index) {
     if (!g.map) return false;
@@ -427,6 +537,10 @@ void follow_catchup(uint8_t peer) {
     if (!g.on || g.is_client || !net_active()) return;
 
     Guard guard;
+    // The marker too, on the next map tick (to everyone -- harmless for a
+    // peer that already has it, since applying the selection it already holds
+    // is a no-op).
+    g.sent_sel = nullptr;
     if (!g.have_here) {
         log_line("FOLLOW", "peer %u joined before this peer entered any node --"
                            " nothing to catch it up to; the next node is published"
@@ -492,6 +606,107 @@ void follow_on_message(const EnterNodeMsg& m) {
              g.pending_count > 1 ? " -- QUEUED, this peer is still behind" : "");
 }
 
+// --- the marker mirror ---------------------------------------------------------
+
+namespace {
+
+void* marker_slot(void* map, uintptr_t slot) {
+    const void* marker = nullptr;
+    if (!map || !mem_read((const uint8_t*)map + kMap_Marker, &marker, sizeof(marker)) ||
+        !marker)
+        return nullptr;
+    void* node = nullptr;
+    mem_read((const uint8_t*)marker + slot, &node, sizeof(node));
+    return node;
+}
+
+// HOST, every map tick: has the selection moved since we last said so? Polled
+// rather than hooked, because two code paths write it (the click and the
+// `home` popup's confirm) and both end up here.
+void host_publish_selection(void* map) {
+    void* sel = marker_slot(map, kMarker_Selected);
+    // The marker clears +0x60 itself once it arrives (or finds the target
+    // unreachable), so null means "standing still" -- and forgetting what we
+    // last sent is what lets the same node be published again later.
+    if (!sel) { g.sent_sel = nullptr; return; }
+    if (sel == g.sent_sel) return;
+    uint32_t index = 0;
+    if (!index_of_node(map, sel, index)) return;   // not an element: not ours to send
+    uint32_t count = 0; void* data = nullptr;
+    read_nodes(map, count, data);
+    MapSelectMsg m{};
+    m.index      = index;
+    m.node_count = count;
+    m.seed0      = node_seed0(sel);
+    mem_read((const uint8_t*)map + kMap_SelFlag, &m.flag, 1);
+    // Marked sent even if the send fails: there is no peer to tell, and the
+    // next change -- or a catch-up -- republishes.
+    g.sent_sel = sel;
+    if (net_send_mapselect(m))
+        log_line_lvl(LogLevel::Trace, "FOLLOW", "-> marker heading for node %u (%s)",
+                     index, node_type_name(node_type(sel)));
+}
+
+// CLIENT, every map tick: walk our marker where the host's is going.
+void client_apply_selection(void* map) {
+    if (!g.sel_pending) return;
+    uint32_t count = 0; void* data = nullptr;
+    if (!read_nodes(map, count, data)) return;              // map not built yet
+    // A mismatch HOLDS rather than drops: right after a chapter change the
+    // selection for the new map routinely arrives while this peer is still
+    // showing the old one. A newer MAPSELECT simply replaces it.
+    void* node = (g.sel_count && g.sel_count != count) ? nullptr : node_at(map, g.sel_index);
+    if (!node || (g.sel_seed && node_seed0(node) != g.sel_seed)) {
+        if (!g.sel_warned) {
+            g.sel_warned = true;
+            log_line("FOLLOW", "the host's marker is heading for node %u of %u, which is"
+                               " not on this peer's map yet -- holding it",
+                     g.sel_index, g.sel_count);
+        }
+        return;
+    }
+    g.sel_pending = false;
+    g.sel_warned  = false;
+    const void* marker = nullptr;
+    if (!mem_read((const uint8_t*)map + kMap_Marker, &marker, sizeof(marker)) || !marker)
+        return;
+    if (marker_slot(map, kMarker_Selected) == node) return;  // already there
+    // Exactly the two writes the click lambda makes, in its order.
+    mem_write((uint8_t*)marker + kMarker_Selected, &node, sizeof(node));
+    mem_write((uint8_t*)map + kMap_SelFlag, &g.sel_flag, 1);
+    log_line_lvl(LogLevel::Trace, "FOLLOW", "marker follows the host toward node %u (%s)",
+                 g.sel_index, node_type_name(node_type(node)));
+}
+
+} // namespace
+
+bool follow_on_map_click(void* impl) {
+    if (!g.on || !g.is_client || !net_active() || !impl) return true;
+    ++g.clicks_eaten;
+    if (g.clicks_eaten == 1 || (g.clicks_eaten % 20) == 0)
+        log_line("FOLLOW", "a map click on this peer was ignored -- the host moves the"
+                           " marker (%u so far)", g.clicks_eaten);
+    return false;
+}
+
+void follow_on_mapselect(const MapSelectMsg& m) {
+    if (!g.on) return;
+    Guard guard;
+    if (!g.is_client) {
+        log_line("FOLLOW", "!! received a map selection while hosting -- both peers"
+                           " believe they own the run");
+        return;
+    }
+    g.sel_pending = true;
+    g.sel_index   = m.index;
+    g.sel_count   = m.node_count;
+    g.sel_seed    = m.seed0;
+    g.sel_flag    = m.flag;
+    g.sel_warned  = false;
+}
+
+uint32_t follow_here_type() { return g.have_here ? g.here_type : 0; }
+
 void* follow_map_update(void* map_screen) {
     if (!g.on || !map_screen) return nullptr;
 
@@ -501,6 +716,13 @@ void* follow_map_update(void* map_screen) {
     // The map is ticking, so the run is BETWEEN nodes. This is the stamp the
     // save flush reads -- see follow_on_map.
     g.map_tick = GetTickCount64();
+
+    // The marker, both directions. Before anything that might enter a node:
+    // a selection is older than any ENTERNODE that follows it on the stream.
+    if (net_active()) {
+        if (g.is_client) client_apply_selection(map_screen);
+        else             host_publish_selection(map_screen);
+    }
 
     // --- a jump asked for by the debug panel --------------------------------
     //
@@ -576,6 +798,20 @@ void* follow_map_update(void* map_screen) {
         return nullptr;
     }
 
+    // LET THE MARKER FINISH ITS WALK. When our marker is already heading for
+    // this very node -- the host's MAPSELECT walked it -- its arrival enters
+    // the node through follow_on_enter_node, which is what the player should
+    // see. Entering from here would cut the walk short. Bounded, because a
+    // walk that never arrives must not strand the run.
+    if (!config().net_follow_delay_ms) {
+        void* target = node_at(map_screen, p.index);
+        if (target && target != g.arrived &&
+            marker_slot(map_screen, kMarker_Selected) == target &&
+            marker_slot(map_screen, kMarker_AtNode) != target &&
+            GetTickCount64() - p.at < kWalkGraceMs)
+            return nullptr;
+    }
+
     uint32_t count = 0; void* data = nullptr;
     if (!read_nodes(map_screen, count, data)) return nullptr;   // not ready yet
 
@@ -626,51 +862,7 @@ void* follow_map_update(void* map_screen) {
 
     const uint32_t entering = p.index;
     pending_pop();
-    ++g.entered;
-    log_line("FOLLOW", "following host into node %u (%s)%s",
-             entering, node_type_name(type),
-             pending_any() ? " -- more nodes still queued" : "");
-
-    // Battle identity, established without negotiating anything: this is the
-    // same node the host entered, so `seed` is the same 64 bits it read. The
-    // host does the matching call in follow_on_enter_node. Note this is the
-    // CLIENT's only chance to make it -- the follow path calls o_EnterNode, the
-    // MinHook trampoline, which bypasses the h_EnterNode detour entirely.
-    lockstep_enter_battle(seed);
-
-    // Everything the host published for this node lands HERE, and it must land
-    // BEFORE remember_node, which is where the meta hash is taken.
-    //
-    // Two separate reasons, and both were measured wrong on 2026-08-26.
-    //
-    // The apply point itself: this is the last moment before EnterNode, so it
-    // is still in time for the battle or shop the node is about to open; and it
-    // is inside MapScreen::update, so the inventory apply's clear-and-rebuild
-    // cannot free Equipment out from under an inventory screen this peer had
-    // open when the host clicked. See the note above invsync_apply_pending.
-    //
-    // The ORDER: the host takes its node hash after publishing, so the hash
-    // describes the run it just pushed. With these calls below remember_node
-    // the client hashed the run it had BEFORE the push -- one node stale --
-    // and reported an inventory mismatch that was entirely ours. That is
-    // exactly the "a hash whose two halves are computed at different points in
-    // the frame compares two different things" failure remember_node's own
-    // comment warns about.
-    invsync_apply_pending("about to follow the host into a node");
-    catsync_apply_pending("about to follow the host into a node");
-    runhist_apply_pending("about to follow the host into a node");
-
-    remember_node(entering, count, type, seed);
-
-    // A shift-held EnterNode takes a completely different branch (the very
-    // first thing it does is SDL_GetScancodeFromKey(SDLK_LSHIFT) and, if down,
-    // tail-calls sub_1403923F0 instead). That is local keyboard state, so the
-    // client would diverge from the host purely by holding a key. Cheap to
-    // notice, so say so rather than let it be mysterious.
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
-        log_line("FOLLOW", "!! LEFT SHIFT is down -- EnterNode branches on it and"
-                           " this peer will not take the host's path");
-
+    follow_into(entering, count, type, seed, "following host into");
     return node;
 }
 

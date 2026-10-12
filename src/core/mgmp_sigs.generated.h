@@ -76,6 +76,13 @@ static const SigTargetDesc kTargetSigs[] = {
     // checked unique in .text of 4127cd6a (unique from byte 20 on).
     { 0x00778DA0, "BRAINPREV",
       "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 F8 FD FF FF 48 81 EC C8 02 00 00" },
+    // Added by hand 2026-10-12, checked unique in .text of 4127cd6a (unique
+    // from byte 14 on; the tail keeps the cmp [rsi+138h],4 -- the `home` test).
+    { 0x00228700, "MAPCLICK",
+      "48 89 5C 24 20 55 56 57 41 56 41 57 48 81 EC C0 00 00 00 48 8B 71 08 83 BE 38 01 00 00 04" },
+    // Same pattern as kCallSigs' Button::Click entry.
+    { 0x0097E8E0, "BTNCLICK",
+      "48 89 74 24 18 57 48 83 EC 60 33 F6" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.

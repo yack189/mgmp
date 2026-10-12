@@ -2216,6 +2216,16 @@ void lockstep_pump() {
             case MSG_ENTERNODE:
                 follow_on_message(m.enter_node);
                 break;
+            case MSG_MAPSELECT:
+                follow_on_mapselect(m.mapselect);
+                break;
+
+            // A button the other player pressed on a screen they control --
+            // an event's continue, a chest's item. Node-scoped, not battle-
+            // scoped, like CHOICE.
+            case MSG_PRESS:
+                choice_on_press(m.from, m.press);
+                break;
 
             // Also not epoch-gated: a decision-screen choice belongs to a map
             // node, not to a battle, and the epoch counter does not advance on

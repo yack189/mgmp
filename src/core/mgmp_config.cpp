@@ -193,6 +193,11 @@ void hook_defaults() {
     g_cfg.hook[T_UpdateDecision] = false;
     g_cfg.hook[T_BrainPreview]   = false;   // a session turns it on
 
+    // The map-click swallow and the button-press mirror. Solo, nobody else
+    // drives the map and there is no screen to mirror a press onto.
+    g_cfg.hook[T_MapNodeClick] = false;
+    g_cfg.hook[T_ButtonClick]  = false;
+
     // The highlight suppressor. Solo, there is nobody to draw another player's
     // aim for, so the guard it reads can never be raised and the hook would be
     // a detour on a function the game calls constantly for no reason at all.
@@ -262,6 +267,17 @@ void hooks_implied_by(bool net_configured) {
         // stream (a displaced cat's stats recomputed with an item on it). Not
         // optional for the same reason as the facing freeze.
         g_cfg.hook[T_BrainPreview] = true;
+
+        // The host drives the map (the client's node clicks are swallowed and
+        // its marker is walked to the host's selection instead), and whoever
+        // controls an event or a chest has their continue / item presses
+        // repeated on the other peer. The press is made from Button::update,
+        // so that hook comes with it.
+        if (g_cfg.net_follow) g_cfg.hook[T_MapNodeClick] = true;
+        if (tune::kChoice) {
+            g_cfg.hook[T_ButtonClick]  = true;
+            g_cfg.hook[T_ButtonUpdate] = true;
+        }
     }
 
     // The panel needs the frame hook one step removed: its connect buttons can

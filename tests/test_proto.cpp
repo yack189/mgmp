@@ -720,6 +720,30 @@ int main() {
               "enc refuses a length with a null payload");
     }
 
+    printf("\n-- MAPSELECT and PRESS round-trip --\n");
+    {
+        MapSelectMsg m{}; m.index = 17; m.node_count = 42;
+        m.seed0 = 0x211f6ea51e365ae0ULL; m.flag = 1;
+        uint32_t n = enc_mapselect(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_MAPSELECT, "MAPSELECT encodes with its type");
+        MapSelectMsg o{};
+        check(dec_mapselect(r, o) && o.index == 17 && o.node_count == 42 &&
+              o.seed0 == m.seed0 && o.flag == 1, "MAPSELECT fields survive");
+        check(r.pos == r.len, "MAPSELECT consumed exactly the frame");
+    }
+    {
+        PressMsg m{}; m.node_seed = 0x0123456789abcdefULL;
+        strcpy_s(m.name, "Event_ExitButton");
+        uint32_t n = enc_press(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_PRESS, "PRESS encodes with its type");
+        PressMsg o{};
+        check(dec_press(r, o) && o.node_seed == m.node_seed &&
+              strcmp(o.name, "Event_ExitButton") == 0, "PRESS fields survive");
+        check(r.pos == r.len, "PRESS consumed exactly the frame");
+    }
+
     printf("\n-- the encoders refuse a buffer that is too small --\n");
     {
         uint8_t tiny[4];

@@ -34,6 +34,17 @@ constexpr uintptr_t kLvl_Subject   = 160;   // the CatData* the screen levels up
 
 constexpr uintptr_t kOptStride     = 240;
 
+// The cat an event is about: WorldEvent+296. The effect handlers spin calls
+// read it as `this->+0x128` and pass it straight to CatData methods
+// (e.g. 0x14091A7A0 -> sub_1400B8A80), and self_status_next_fight writes
+// through it. Validated at run time rather than trusted: the pointer has to
+// resolve to a cat id the party table knows, or the host decides.
+constexpr uintptr_t kEvt_Subject   = 0x128;
+
+// MapNodeType values whose screen is a chest rather than a decision: treasure,
+// furniturebox, foodbox. The host alone opens those.
+bool chest_node(uint32_t t) { return t >= 13 && t <= 15; }
+
 // An event option entry's stat key -- "str".."lck", "coins", "quest", "none",
 // "home". A std::string at entry+64, compared against exactly those literals
 // all the way through setupActionChoice.
@@ -113,11 +124,37 @@ struct State {
     uint32_t applied   = 0;
     uint32_t swallowed = 0;
 
-    // The event screen's liveness, and the client's "press continue for me".
+    // The event screen's liveness.
     ULONGLONG event_tick = 0;
-    bool      want_exit  = false;
-    ULONGLONG exit_last  = 0;
     void    (*button_click)(void*, bool) = nullptr;
+
+    // WHO ANSWERS THIS EVENT: the player who owns the cat it is about, cached
+    // per WorldEvent so the log says it once.
+    void*    ctl_we   = nullptr;
+    uint8_t  ctl_peer = kHostPeer;
+    uint64_t ctl_cat  = 0;
+
+    // BUTTONS THE OTHER PLAYER PRESSED, to press here in the same order. An
+    // event's continue, a chest's items and its exit. Each names the node it
+    // was pressed on, so one can never land on a later screen.
+    struct Press {
+        uint64_t  seed  = 0;
+        char      name[48] = {};
+        ULONGLONG due   = 0;      // first tick it was due here (0 = not yet)
+        uint32_t  tries = 0;
+    };
+    static constexpr uint32_t kPresses = 16;
+    Press     pq[kPresses];
+    uint32_t  pq_n          = 0;
+    ULONGLONG press_last    = 0;
+    bool      press_injecting = false;
+    uint32_t  presses_sent  = 0;
+    uint32_t  presses_done  = 0;
+    uint32_t  presses_eaten = 0;
+    // The node on which the other player has already pressed the event's
+    // continue. From then on this player's own continue is let through too, so
+    // a repeat that fails can never leave anyone stuck on a dead screen.
+    uint64_t  exit_released = 0;
 
     CRITICAL_SECTION cs;
     bool cs_ready = false;
@@ -146,6 +183,73 @@ bool was_skipped(uint64_t seed) {
     for (uint32_t i = 0; i < State::kSkippedRing; ++i)
         if (g.skipped[i] == seed) return true;
     return false;
+}
+
+// --- who controls the screen ---------------------------------------------------
+
+bool is_exit(const char* n)  { return strcmp(n, "Event_ExitButton") == 0; }
+bool is_chest(const char* n) { return strncmp(n, "ChestButton_", 12) == 0; }
+
+// A press may only ever be repeated for one of these. A PRESS naming anything
+// else is refused: the other peer does not get to press arbitrary buttons here.
+bool mirrorable(const char* n) {
+    return is_exit(n) || is_chest(n) || strcmp(n, "Shop_ExitButton") == 0;
+}
+
+uint8_t self_peer() {
+    const uint8_t me = net_self();
+    if (me != kNoPeer) return me;
+    return g.is_client ? kNoPeer : kHostPeer;
+}
+
+// Called with the Guard held.
+uint8_t event_controller(void* we) {
+    if (!we) return kHostPeer;
+    // Without both call targets this peer cannot apply the other's answer, so
+    // it must not hand the event away: the old rule, the host answers.
+    if (!g.resolved) return kHostPeer;
+    if (chest_node(follow_here_type())) return kHostPeer;
+    if (we == g.ctl_we) return g.ctl_peer;
+
+    const void* cat = nullptr;
+    uint64_t id = 0;
+    if (mem_read((const uint8_t*)we + kEvt_Subject, &cat, sizeof(cat)) && cat)
+        id = party_catdata_id(cat);
+    uint8_t who = id ? party_owner(id) : kNoPeer;
+    if (who == kNoPeer) who = kHostPeer;
+
+    g.ctl_we   = we;
+    g.ctl_peer = who;
+    g.ctl_cat  = (id && party_owner(id) != kNoPeer) ? id : 0;
+    log_line("CHOICE", "this event is about cat %016llx -- %s answers it",
+             (unsigned long long)g.ctl_cat,
+             who == self_peer() ? "THIS player" : "the other player");
+    return who;
+}
+
+bool event_mine(void* we) { return event_controller(we) == self_peer(); }
+
+// Called with the Guard held.
+void press_pop() {
+    if (!g.pq_n) return;
+    memmove(&g.pq[0], &g.pq[1], (g.pq_n - 1) * sizeof(State::Press));
+    --g.pq_n;
+}
+
+void press_push(uint64_t seed, const char* name, const char* why) {
+    for (uint32_t i = 0; i < g.pq_n; ++i)
+        if (g.pq[i].seed == seed && strcmp(g.pq[i].name, name) == 0 && is_exit(name))
+            return;                                   // one continue is enough
+    if (g.pq_n >= State::kPresses) {
+        log_line("CHOICE", "!! %u button presses already waiting -- dropping '%s'",
+                 g.pq_n, name);
+        return;
+    }
+    State::Press& p = g.pq[g.pq_n++];
+    p = State::Press{};
+    p.seed = seed;
+    strncpy_s(p.name, name, _TRUNCATE);
+    log_line("CHOICE", "will press '%s' here (%s)", name, why);
 }
 
 // --- reading a std::string out of the game ---------------------------------
@@ -396,7 +500,7 @@ void apply_pending(uint8_t kind, void* screen) {
         log_line("CHOICE", "applied the other player's %s choice: option %u/%u ('%s')",
                  kind_name(kind), want, count, mine);
     } else {
-        log_line("CHOICE", "!! failed to apply the host's %s choice %u",
+        log_line("CHOICE", "!! failed to apply the other player's %s choice %u",
                  kind_name(kind), want);
     }
 }
@@ -437,6 +541,9 @@ void choice_init() {
     g.pending[0] = g.pending[1] = false;
     g.lvl_queued = 0;
     g.injecting = false;
+    g.pq_n = 0;
+    g.ctl_we = nullptr;
+    g.press_injecting = false;
     if (!g.on) { log_line("CHOICE", "choice replication disabled by net_choice = 0"); return; }
     if (g.is_client && !g.resolved) {
         // Refusing is the safe direction. An armed client SWALLOWS every local
@@ -449,17 +556,16 @@ void choice_init() {
                            " the two runs to diverge on the first event.");
         return;
     }
-    log_line_lvl(LogLevel::Trace, "CHOICE", "armed -- %s",
-             g.is_client ? "taking the host's event and level-up choices; local clicks"
-                           " on those screens are suppressed"
-                         : "publishing this peer's event and level-up choices");
+    log_line_lvl(LogLevel::Trace, "CHOICE", "armed -- events and level-ups are answered"
+                 " by whoever owns the cat they are about; the other peer follows");
 }
 
 void choice_shutdown() {
     if (!g.on) return;
     log_line_lvl(LogLevel::Trace, "CHOICE",
-             "done: %u sent, %u applied, %u local click(s) suppressed",
-             g.sent, g.applied, g.swallowed);
+             "done: %u sent, %u applied, %u local click(s) suppressed; presses %u sent,"
+             " %u repeated here, %u ignored", g.sent, g.applied, g.swallowed,
+             g.presses_sent, g.presses_done, g.presses_eaten);
     g.on = false;
     if (g.cs_ready) { DeleteCriticalSection(&g.cs); g.cs_ready = false; }
 }
@@ -481,14 +587,14 @@ bool choice_on_event_commit(void* cap) {
     uint8_t* begin = nullptr; uint32_t count = 0;
     const bool have = read_options(we, kEvt_OptBegin, kEvt_OptEnd, begin, count);
 
-    if (g.is_client) {
+    if (!event_mine(we)) {
         ++g.swallowed;
-        log_line("CHOICE", "suppressed a local event click -- the host owns this run's"
-                           " choices (this peer had %u option(s))", have ? count : 0);
+        log_line("CHOICE", "suppressed a local event click -- the other player answers"
+                           " this event (this peer had %u option(s))", have ? count : 0);
         return false;                        // do NOT run the original
     }
 
-    // Host: name the index, publish it, then let the click through.
+    // Ours: name the index, publish it, then let the click through.
     if (!have) {
         log_line("CHOICE", "!! could not read this event's option array -- the peer will"
                            " not be told which option was picked");
@@ -519,7 +625,8 @@ void choice_on_event_update(void* world_event) {
     Guard guard;
     g.world_event = world_event;
     g.event_tick = GetTickCount64();
-    if (g.is_client) apply_pending(kChoiceEvent, world_event);
+    // Either role may be waiting: the answer comes from whoever owns the cat.
+    apply_pending(kChoiceEvent, world_event);
 }
 
 // --- the level-up screen ---------------------------------------------------
@@ -613,13 +720,8 @@ void choice_on_message(const ChoiceMsg& m) {
     if (!g.on) return;
     Guard guard;
 
-    // Events stay the host's. A level-up comes from whoever owns the cat, so
-    // the host now receives those from the client.
-    if (!g.is_client && m.kind != kChoiceLevelUp) {
-        log_line("CHOICE", "!! received a %s choice while hosting -- both peers believe"
-                           " they own the run", kind_name(m.kind));
-        return;
-    }
+    // Both kinds come from whoever owns the cat the screen is about, so
+    // either role receives either kind now.
     const uint8_t kind = (m.kind == kChoiceLevelUp) ? kChoiceLevelUp : kChoiceEvent;
 
     // A choice for a node mgmp_follow already gave up on. Refusing it here is
@@ -659,7 +761,7 @@ void choice_on_message(const ChoiceMsg& m) {
     g.pending_name[kind][sizeof(g.pending_name[kind]) - 1] = '\0';
     g.pending_subject[kind] = (kind == kChoiceLevelUp) ? m.subject : 0;
 
-    log_line("CHOICE", "<- host chose %s option %u/%u ('%s') on node %016llx",
+    log_line("CHOICE", "<- the other player chose %s option %u/%u ('%s') on node %016llx",
              kind_name(kind), m.index, m.count, g.pending_name[kind],
              (unsigned long long)m.node_seed);
 
@@ -673,7 +775,24 @@ void choice_on_message(const ChoiceMsg& m) {
 void choice_on_node_entered(uint64_t node_seed) {
     if (!g.on) return;
     Guard guard;
+
+    // Presses for the node we are LEAVING can never be made now: that screen
+    // is gone. Presses for nodes we have not reached yet stay queued.
+    const uint64_t leaving = g.here_seed;
+    if (leaving && leaving != node_seed) {
+        uint32_t w = 0;
+        for (uint32_t i = 0; i < g.pq_n; ++i) {
+            if (g.pq[i].seed == leaving) {
+                log_line("CHOICE", "!! never pressed '%s' on the node just left -- dropped",
+                         g.pq[i].name);
+                continue;
+            }
+            g.pq[w++] = g.pq[i];
+        }
+        g.pq_n = w;
+    }
     g.here_seed = node_seed;
+    g.ctl_we = nullptr;
 
     // The cached screens belong to the node just left. Clearing them is not
     // tidiness: choice_on_message applies straight into whichever pointer is
@@ -695,6 +814,12 @@ void choice_on_node_skipped(uint64_t node_seed) {
     Guard guard;
     remember_skipped(node_seed);
 
+    {
+        uint32_t w = 0;
+        for (uint32_t i = 0; i < g.pq_n; ++i)
+            if (g.pq[i].seed != node_seed) g.pq[w++] = g.pq[i];
+        g.pq_n = w;
+    }
     for (uint8_t kind = 0; kind < 2; ++kind) {
         if (!g.pending[kind] || g.pending_seed[kind] != node_seed) continue;
         log_line("CHOICE", "!! node %016llx was passed over without this peer"
@@ -717,32 +842,166 @@ bool choice_event_open() {
 }
 
 void choice_request_event_exit() {
-    if (!g.on || !g.is_client) return;
-    // Not while the host's choice is still waiting to be applied: pressing
-    // continue on an event this peer has not answered would leave it unanswered.
+    if (!g.on) return;
+    Guard guard;
+    // Not while the other player's answer is still waiting to be applied:
+    // pressing continue on an event this peer has not answered would leave it
+    // unanswered.
     if (g.pending[kChoiceEvent]) return;
-    if (!g.want_exit)
-        log_line("CHOICE", "the host has moved on -- closing this peer's event screen");
-    g.want_exit = true;
+    g.exit_released = g.here_seed;
+    press_push(g.here_seed, "Event_ExitButton", "the host has moved on");
+}
+
+bool resolve_click() {
+    if (g.button_click) return true;
+    const uintptr_t click = addr_of_call(C_ButtonClick);
+    if (!click) return false;
+    g.button_click = (void(*)(void*, bool))click;
+    return true;
+}
+
+bool choice_on_button_click(void* button) {
+    if (!g.on || !button || !net_active()) return true;
+    if (g.press_injecting) return true;               // our own repeat of a press
+
+    char name[64];
+    if (!mem_read_std_string((const uint8_t*)button + kBtn_Name, name, sizeof(name)))
+        return true;
+
+    const bool exit   = is_exit(name);
+    const bool choice = strcmp(name, "Event_ChoiceButton") == 0;
+    const bool chest  = is_chest(name);
+    const bool shopx  = strcmp(name, "Shop_ExitButton") == 0;
+    if (!exit && !choice && !chest && !shopx) return true;
+
+    Guard guard;
+    uint8_t ctl = kHostPeer;
+    if (exit || choice) {
+        if (!g.world_event || !choice_event_open()) return true;
+        ctl = event_controller(g.world_event);
+    } else if (shopx && !chest_node(follow_here_type())) {
+        return true;                                  // an ordinary shop: both shop
+    }
+
+    if (exit && g.exit_released && g.exit_released == g.here_seed) return true;
+    if (ctl != self_peer()) {
+        ++g.presses_eaten;
+        if (g.presses_eaten == 1 || (g.presses_eaten % 10) == 0)
+            log_line("CHOICE", "ignored '%s' on this peer -- the other player controls"
+                               " this screen (%u so far)", name, g.presses_eaten);
+        return false;
+    }
+    if (choice) return true;              // its CHOICE is published by the commit
+
+    PressMsg m{};
+    m.node_seed = g.here_seed;
+    strncpy_s(m.name, name, _TRUNCATE);
+    if (net_send_press(m)) {
+        ++g.presses_sent;
+        log_line("CHOICE", "-> pressed '%s'", name);
+    }
+    return true;
+}
+
+void choice_on_press(uint8_t from, const PressMsg& m) {
+    if (!g.on) return;
+    char name[48];
+    memcpy(name, m.name, sizeof(name));
+    name[sizeof(name) - 1] = '\0';
+    if (!mirrorable(name)) {
+        log_line("CHOICE", "!! peer %u asked this peer to press '%s', which is not a"
+                           " button that is ever mirrored -- refused", (unsigned)from, name);
+        return;
+    }
+    Guard guard;
+    if (was_skipped(m.node_seed)) {
+        log_line("CHOICE", "!! a press of '%s' arrived for a node this peer passed over"
+                           " -- refused", name);
+        return;
+    }
+    if (is_exit(name)) g.exit_released = m.node_seed;
+    press_push(m.node_seed, name, "the other player pressed it");
 }
 
 void choice_on_button_update(void* button) {
-    if (!g.want_exit || !button) return;
-    if (!choice_event_open()) { g.want_exit = false; return; }
-    if (!g.button_click) {
-        const uintptr_t click = addr_of_call(C_ButtonClick);
-        if (!click) { g.want_exit = false; return; }
-        g.button_click = (void(*)(void*, bool))click;
-    }
-    const ULONGLONG now = GetTickCount64();
-    if (now - g.exit_last < 500) return;      // one press, then give it time
+    if (!g.on || !button || !g.pq_n) return;
+    Guard guard;
+    State::Press& f = g.pq[0];
+    // Due only on the node it was pressed on. A press for a node this peer has
+    // not reached yet waits; one for a node it left was dropped on the way out.
+    if (f.seed && g.here_seed && f.seed != g.here_seed) return;
+
     char name[64];
     if (!mem_read_std_string((const uint8_t*)button + kBtn_Name, name, sizeof(name)))
         return;
-    if (strcmp(name, "Event_ExitButton") != 0) return;
-    g.exit_last = now;
-    log_line("CHOICE", "pressing '%s' to follow the host out of the event", name);
+    if (strcmp(name, f.name) != 0) return;
+
+    const ULONGLONG now = GetTickCount64();
+    if (!f.due) f.due = now;
+    if (is_exit(f.name) && g.pending[kChoiceEvent]) return;   // the answer first
+    if (now - g.press_last < 450) return;    // one press, then let the screen react
+    if (!resolve_click()) {
+        log_line("CHOICE", "!! Button::Click did not resolve -- cannot press '%s'", f.name);
+        press_pop();
+        return;
+    }
+
+    ++f.tries;
+    g.press_last = now;
+    log_line("CHOICE", "pressing '%s' for the other player", f.name);
+    g.press_injecting = true;
     g.button_click(button, false);
+    g.press_injecting = false;
+
+    // A chest item is one press. Continue is retried until the event is
+    // actually gone (choice_pump), because Button::Click has guards of its own
+    // and a press during the result's animation can be refused.
+    if (!is_exit(f.name)) { ++g.presses_done; press_pop(); }
+}
+
+void choice_pump() {
+    if (!g.on || !g.pq_n) return;
+    Guard guard;
+    State::Press& f = g.pq[0];
+    const ULONGLONG now = GetTickCount64();
+    if (is_exit(f.name) && f.tries && !choice_event_open()) {
+        ++g.presses_done;
+        log_line_lvl(LogLevel::Trace, "CHOICE", "the event closed after %u press(es)",
+                     f.tries);
+        press_pop();
+        return;
+    }
+    if (f.tries >= 12) {
+        log_line("CHOICE", "!! pressed '%s' %u times and the screen did not react --"
+                           " giving up on it", f.name, f.tries);
+        press_pop();
+        return;
+    }
+    // Due here, and the button never showed up. Long enough for any screen
+    // transition; short enough that one stale press cannot hold the queue for
+    // the rest of the run.
+    if (f.seed == g.here_seed && f.due == 0) f.due = now;
+    if (f.due && f.tries == 0 && now - f.due > 30000) {
+        log_line("CHOICE", "!! '%s' never appeared on this peer in 30 s -- dropped",
+                 f.name);
+        press_pop();
+    }
+}
+
+bool choice_event_status(char* cat, uint32_t cap, bool* mine) {
+    if (cat && cap) cat[0] = '\0';
+    if (mine) *mine = false;
+    if (!g.on || !net_active() || !choice_event_open() || !g.world_event) return false;
+    Guard guard;
+    const uint8_t who = event_controller(g.world_event);
+    if (mine) *mine = (who == self_peer());
+    if (cat && cap && g.ctl_cat) {
+        static PartyRow rows[64];
+        const uint32_t n = party_rows(rows, 64);
+        for (uint32_t i = 0; i < n; ++i)
+            if (rows[i].id == g.ctl_cat) { strncpy_s(cat, cap, rows[i].name, _TRUNCATE); break; }
+    }
+    return true;
 }
 
 } // namespace mgmp

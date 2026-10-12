@@ -1386,6 +1386,37 @@ someone enter during a session is nothing at all after a reload — and a run
 reloaded onto a wedged node is exactly when you need to know which node that is.
 The marker slots survive a reload because they are the game's state.
 
+### The marker walks; EnterNode is only its arrival (measured on `4127cd6a`)
+
+A map click does not enter anything. The node's click lambda
+`sub_140228700` (`_Do_call`, capture+8 = `MapNode`) writes exactly
+`marker+0x60 = node` and `MapScreen+0x1E7 = 0` — or raises a confirm popup for
+`home`, whose own lambda `sub_140228320` writes the same pair with `1`. Those are
+the **only two writers of `marker+0x60`** in the image.
+
+The marker (vtable `0x140F14A28`, update = slot 10 `sub_140221FC0`) does the rest:
+idle with `+0x60` set and `!= +0x50`, it paths one node at a time (`+0x58` = the
+step, `sub_140224050`); on reaching each step it sets `+0x50`, and calls its
+callback, MapScreen's lambda `0x14039B180`, which calls `EnterNode` **only if
+`MapNode+0x168 == 0`** (unvisited) and otherwise lets the walk continue. When
+the callback reports done, `+0x60` is cleared to null; `marker+0x78` set
+clears `+0x58`/`+0x60` every frame.
+
+So co-op mirrors the **selection**, not the entry: the host publishes every
+non-null change of `+0x60` (`MAPSELECT`), the client writes the same two fields
+and its own marker walks the same path, and its arrival's `EnterNode` is let
+through when the host's `ENTERNODE` for that node is already queued. Map clicks
+on a client are swallowed at `sub_140228700`. Direct entry from
+`MapScreen::update` remains the fallback (6 s grace).
+
+**Who answers an event:** the owner (party table) of `WorldEvent+0x128`, the
+subject `CatData*` — the `spin` handlers read it as `this+0x128` and pass it to
+`CatData` methods (e.g. `0x14091A7A0`). Unknown cat, or a chest node
+(`treasure`/`furniturebox`/`foodbox`), → host. The event's continue is
+`Event_ExitButton` (`WorldEvent::setup_end_button`); a chest is a Shop in
+`treasure_room` mode with `ChestButton_N` and `Shop_ExitButton`. These are
+mirrored by name through a `Button::Click` hook (`PRESS`).
+
 ### `MapNodeType`, from `MapNode::str_to_type` @ `0x140224C10`
 
 | | | | |

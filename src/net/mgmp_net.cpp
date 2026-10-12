@@ -170,6 +170,8 @@ bool decode_into(const uint8_t* buf, uint32_t len, NetMsg& m) {
         case MSG_RUNCATS:   return dec_runcats(r, m.runcats);
         case MSG_OWNERS:    return dec_owners(r, m.owners);
         case MSG_CLAIM:     return dec_claim(r, m.claim);
+        case MSG_MAPSELECT: return dec_mapselect(r, m.mapselect);
+        case MSG_PRESS:     return dec_press(r, m.press);
         case MSG_PEERS:   return dec_peers(r, m.peers);
         case MSG_HALT:    return dec_halt(r, m.halt);
         case MSG_REFUSE:  r.str(m.refuse, sizeof(m.refuse)); return r.ok;
@@ -648,6 +650,8 @@ bool net_send_nodehash(const NodeHashMsg& m) { MGMP_SEND_WITH(enc_nodehash, m); 
 // Not in relayed() above: host-authored, so net_send already reaches every
 // client and a relay would deliver it twice.
 bool net_send_hostleft(const HostLeftMsg& m) { MGMP_SEND_WITH(enc_hostleft, m); }
+bool net_send_mapselect(const MapSelectMsg& m) { MGMP_SEND_WITH(enc_mapselect, m); }
+bool net_send_press(const PressMsg& m) { MGMP_SEND_WITH(enc_press, m); }
 bool net_send_refuse (const char* reason) { MGMP_SEND_WITH(enc_refuse,  reason); }
 
 #undef MGMP_SEND_WITH

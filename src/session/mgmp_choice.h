@@ -113,6 +113,7 @@
 namespace mgmp {
 
 struct ChoiceMsg;
+struct PressMsg;
 
 void choice_set_base(uintptr_t base);
 void choice_init();
@@ -166,11 +167,37 @@ void choice_on_node_skipped(uint64_t node_seed);
 bool choice_event_open();
 
 // CLIENT: press the event's "continue" (Event_ExitButton) for this player,
-// because the host has already moved on. Honoured by the next Button::update
-// of that button, through the same Button::Click the auto-Play uses.
+// because the host has already moved on. Queued like any mirrored press and
+// honoured by the next Button::update of that button.
 void choice_request_event_exit();
 
-// From the Button::update hook, every button, every frame.
+// --- who answers an event, and mirrored presses -----------------------------
+//
+// An event is answered by the player who owns the cat it is about
+// (WorldEvent+296, looked up in mgmp_party's table); a chest node, and any
+// event whose cat the table does not know, by the host. That player's option
+// click publishes CHOICE as before -- now in either direction -- and their
+// press of the event's continue (Event_ExitButton) is sent as a PRESS and
+// repeated on the other peer, so both screens advance together. The other
+// player's clicks on that screen are swallowed. A chest (a `treasure_room`
+// shop: ChestButton_N, then Shop_ExitButton) is the host's, mirrored the
+// same way.
+
+// The Button::Click hook. False = swallow this press.
+bool choice_on_button_click(void* button);
+
+// From the Button::update hook, every button, every frame: make a queued press.
 void choice_on_button_update(void* button);
+
+void choice_on_press(uint8_t from, const PressMsg& m);
+
+// Once a frame from the session tick: retire a continue whose event has
+// closed, give up on presses whose button never appears.
+void choice_pump();
+
+// For the on-screen banner: true while an event is open in a session. `cat`
+// gets the subject cat's name ("" if unknown), `mine` whether this player
+// answers it.
+bool choice_event_status(char* cat, uint32_t cap, bool* mine);
 
 } // namespace mgmp

@@ -80,6 +80,11 @@ enum Target : int {
                          // player's aim preview, which displaces the cat and
                          // recomputes its stats; the simulation stream is
                          // pinned across it. See h_BrainPreview.
+    T_MapNodeClick,      // MapNode's click lambda (sub_140228700) -- the only
+                         // writer of the map marker's selected node. Swallowed
+                         // on a client: the host drives the map.
+    T_ButtonClick,       // glaiel::Button::Click -- every button press, by
+                         // name, for mirroring event/chest buttons between peers
     T_COUNT
 };
 
@@ -489,6 +494,22 @@ static const TargetDesc kTargets[T_COUNT] = {
     // Pinning the stream across the whole preview is the same remedy mgmp_aim
     // already applies to the PEER's preview; this is the local half.
     { 0x00778DA0, "BRAINPREV", "glaiel::PlayerBrain::update (vtable slot 10)" },
+
+    // The map node's click, the _Do_call of a std::function<void()> whose
+    // capture+8 is the MapNode. Body: if the node is `home` and some other node
+    // is clickable, raise a confirmation popup; otherwise
+    //     *(*(node+0x170)+0xA0)+0x60 = node;  *(node+0x170)+0x1E7 = 0;
+    // Those are the ONLY two writes to marker+0x60 in the image (the other is
+    // the popup's own confirm lambda, sub_140228320, reachable only from here).
+    // The marker walks toward +0x60 on its own and calls EnterNode on arrival
+    // (the lambda at 0x14039B180), so this is the map's whole input surface.
+    { 0x00228700, "MAPCLICK",  "MapNode click lambda (sub_140228700)" },
+
+    // Called from exactly one place, Button::update, as Click(this, 0). Already
+    // a call target (C_ButtonClick) for the auto-clickers; hooked as well so a
+    // press can be both published and, on the peer that does not control the
+    // screen, swallowed.
+    { 0x0097E8E0, "BTNCLICK",  "glaiel::Button::Click(Button*, bool)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

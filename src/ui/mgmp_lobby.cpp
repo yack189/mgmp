@@ -30,6 +30,7 @@
 #include "mgmp_savefile.h"
 #include "mgmp_party.h"
 #include "mgmp_follow.h"
+#include "mgmp_choice.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -606,6 +607,31 @@ void draw_hud(const Content& c) {
         const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
         dl->AddRectFilled(a, b, col(kPanel, 0.75f), 10.0f * s);
         dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s), col(kGreen), mine);
+    } else {
+        // Who answers the event on screen. Same placement as the turn banner,
+        // which can never be up at the same time.
+        char cat[48] = {};
+        bool ours = false;
+        if (choice_event_status(cat, sizeof(cat), &ours) && have_other) {
+            char banner[160];
+            if (ours && cat[0])
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Evento de %s: decides tú", cat);
+            else if (ours)
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Este evento lo decides tú");
+            else if (cat[0])
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Evento de %s: decide %s",
+                            cat, other);
+            else
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "%s decide este evento", other);
+            ImFont* ft = L.font_title ? L.font_title : fb;
+            const float bpx = 22.0f * s;
+            const ImVec2 bs = ft->CalcTextSizeA(bpx, FLT_MAX, 0.0f, banner);
+            const ImVec2 a(c.x + (c.w - bs.x) * 0.5f - 18.0f * s, c.y + 18.0f * s);
+            const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
+            dl->AddRectFilled(a, b, col(kPanel, 0.82f), 10.0f * s);
+            dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s),
+                        col(ours ? kGreen : kCream), banner);
+        }
     }
 }
 

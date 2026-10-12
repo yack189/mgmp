@@ -46,6 +46,7 @@
 namespace mgmp {
 
 struct EnterNodeMsg;
+struct MapSelectMsg;
 
 void follow_init();
 void follow_shutdown();
@@ -134,5 +135,32 @@ bool follow_selected_node(uint32_t& index);
 // through the ordinary hook, so the client follows exactly as if the node had
 // been clicked. This EDITS THE RUN and says so in the log every time.
 void follow_request_jump(uint32_t index);
+
+// --- the marker, mirrored ----------------------------------------------------
+//
+// EnterNode is where the run CHANGES, but it is not what a player SEES. A click
+// on the map only selects (marker+0x60); the marker then walks there and calls
+// EnterNode itself on arrival. Read off the marker's update (vtable 0x140F14A28
+// slot 10, sub_140221FC0): with nothing in flight it paths from +0x50 toward
+// +0x60 one node at a time (+0x58 is the step), and on reaching each step node
+// it calls its callback (MapScreen's lambda at 0x14039B180) -- which enters
+// that node if it has not been visited (MapNode+0x168 == 0) and otherwise lets
+// the walk continue. When the callback reports done, +0x60 is cleared. Publishing only EnterNode made the client's
+// marker stand still and then jump, which is the "the map is not synced"
+// report of 2026-10-12. So the host also publishes every change of its
+// selection (MAPSELECT), the client writes the same two fields the click
+// writes, and its own marker walks the same path. When it arrives, the game
+// calls EnterNode on the client by itself -- and if the host has already
+// entered that node, follow_on_enter_node lets it through instead of
+// swallowing it. The old direct entry stays as the fallback.
+
+// MapNode's click lambda. False = swallow (a client: the host drives the map).
+bool follow_on_map_click(void* lambda_impl);
+
+// CLIENT: the host's marker is now heading for this node.
+void follow_on_mapselect(const MapSelectMsg& m);
+
+// The type of the node this peer is standing in (MapNodeType), 0 if unknown.
+uint32_t follow_here_type();
 
 } // namespace mgmp

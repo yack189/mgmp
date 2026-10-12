@@ -51,7 +51,7 @@ namespace mgmp {
 // So: if the value a peer puts in a message changes meaning, that is a protocol
 // change even when every byte stays where it was. Refusing at connect is free;
 // diagnosing it from a turn-0 halt is not.
-constexpr uint32_t kProtoVersion = 29;  // 29 OWNERS + CLAIM (which player drives which cat, decided by the players instead of by roster order) and CHOICE carries the level-up's subject cat, because a level-up now belongs to whoever owns that cat; 28 RUNCATS -- the host's run cat-id list, so a client whose run generated its own cats (the tutorial) adopts the host's; 2 CONTROL, 3 ENTERNODE, 4 SAVEFILE, 5 epoch, 6 CATDATA, 7 INVENTORY, 8 state hash drops facing + roster cap 254, 9 peer envelope + PEERS (up to 4 players), 10 state hash gains ElementList (tiles + equipment), 11 CURSOR, 12 state hash gains live-list membership and stops hashing departed cats, 13/14/15 CURSOR churn while the pointer moved from the board to the screen, 16 CURSOR carries the cursor-art index -- the peer's pointer is now the game's own texture for the state their game is in, 17 CHOICE -- event and level-up option choices, which is what replaces RUNSTATE, 18 the per-battle epoch COUNTER becomes a u64 battle_id -- the node seed both peers already share -- so battle identity survives a peer restarting, 19 CHOICE carries the node seed it was made on -- a held choice used to have no idea which node it belonged to and could surface on a later one, 20 RUNHIST (the run-history object the event roller reads) + NODEHASH (the meta layer finally gets the per-node check the battle layer has had per turn since version 5), 21 AIM -- the range/AOE tiles the other player is aiming at, drawn on this peer by the game's own Brain::DrawAbilityAOE; cosmetic like CURSOR and hashed by nothing, 22 AIM is read from the PLAYERBRAIN'S SELECTION (PlayerBrain+0x3D8/+0x358/+0x360) instead of the cached decision, and the receiver draws the RANGE tiles as well as the AOE -- not one byte of AimMsg moved, which is exactly the kind of change version 12 established has to bump anyway, 23 the range-tile call that came with 22 is REMOVED -- sub_140138A10 applies statuses rather than drawing, so mirroring it mutated the non-owning peer's simulation and cost a run; the bump exists so a peer still running 22 cannot join and do it, 24 the highlight is back and the tiles with it, but only ever called with sub_140151CE0 -- its apply_status half -- swallowed by T_HighlightRefresh and with the whole roster's cat state fenced across the call, 25 a Move aim also shows the ATTACK RANGE from the hovered square -- the game gets those tiles by displacing the cat and moving it back, so the receiver now makes two TacticsObject::Move calls per frame inside the same state fence; not one byte of AimMsg moved, version 12's rule again, 26 STATEDUMP -- on a hash mismatch each peer sends the per-cat table its own hash was taken over, so the log that halts also names the cat and the field instead of requiring two log files side by side, 27 SAVEFILE carries `fresh` -- whether the host is (re)starting a run from the save screen or catching a peer up. A host that goes back to the menu and picks a slot again starts a NEW run, and the client used to decline that save with "already in the run": the g.applied latch is per-PROCESS and the two sends were byte-identical, so nothing on the receiving side could tell them apart, and HOSTLEFT -- the other half of that story: `fresh` handles the host STARTING a run, HOSTLEFT handles it ENDING one. Both shipped in the same unreleased version, which is the only reason they share a number
+constexpr uint32_t kProtoVersion = 30;  // 30 MAPSELECT (the client's marker walks to the node the host selected, live, instead of teleporting when the host arrives) + PRESS (an event's continue button, and a chest's item buttons, pressed by whoever controls that screen are pressed on the other peer too) -- and CHOICE events now flow in both directions, because the cat an event is about decides who answers it; 29 OWNERS + CLAIM (which player drives which cat, decided by the players instead of by roster order) and CHOICE carries the level-up's subject cat, because a level-up now belongs to whoever owns that cat; 28 RUNCATS -- the host's run cat-id list, so a client whose run generated its own cats (the tutorial) adopts the host's; 2 CONTROL, 3 ENTERNODE, 4 SAVEFILE, 5 epoch, 6 CATDATA, 7 INVENTORY, 8 state hash drops facing + roster cap 254, 9 peer envelope + PEERS (up to 4 players), 10 state hash gains ElementList (tiles + equipment), 11 CURSOR, 12 state hash gains live-list membership and stops hashing departed cats, 13/14/15 CURSOR churn while the pointer moved from the board to the screen, 16 CURSOR carries the cursor-art index -- the peer's pointer is now the game's own texture for the state their game is in, 17 CHOICE -- event and level-up option choices, which is what replaces RUNSTATE, 18 the per-battle epoch COUNTER becomes a u64 battle_id -- the node seed both peers already share -- so battle identity survives a peer restarting, 19 CHOICE carries the node seed it was made on -- a held choice used to have no idea which node it belonged to and could surface on a later one, 20 RUNHIST (the run-history object the event roller reads) + NODEHASH (the meta layer finally gets the per-node check the battle layer has had per turn since version 5), 21 AIM -- the range/AOE tiles the other player is aiming at, drawn on this peer by the game's own Brain::DrawAbilityAOE; cosmetic like CURSOR and hashed by nothing, 22 AIM is read from the PLAYERBRAIN'S SELECTION (PlayerBrain+0x3D8/+0x358/+0x360) instead of the cached decision, and the receiver draws the RANGE tiles as well as the AOE -- not one byte of AimMsg moved, which is exactly the kind of change version 12 established has to bump anyway, 23 the range-tile call that came with 22 is REMOVED -- sub_140138A10 applies statuses rather than drawing, so mirroring it mutated the non-owning peer's simulation and cost a run; the bump exists so a peer still running 22 cannot join and do it, 24 the highlight is back and the tiles with it, but only ever called with sub_140151CE0 -- its apply_status half -- swallowed by T_HighlightRefresh and with the whole roster's cat state fenced across the call, 25 a Move aim also shows the ATTACK RANGE from the hovered square -- the game gets those tiles by displacing the cat and moving it back, so the receiver now makes two TacticsObject::Move calls per frame inside the same state fence; not one byte of AimMsg moved, version 12's rule again, 26 STATEDUMP -- on a hash mismatch each peer sends the per-cat table its own hash was taken over, so the log that halts also names the cat and the field instead of requiring two log files side by side, 27 SAVEFILE carries `fresh` -- whether the host is (re)starting a run from the save screen or catching a peer up. A host that goes back to the menu and picks a slot again starts a NEW run, and the client used to decline that save with "already in the run": the g.applied latch is per-PROCESS and the two sends were byte-identical, so nothing on the receiving side could tell them apart, and HOSTLEFT -- the other half of that story: `fresh` handles the host STARTING a run, HOSTLEFT handles it ENDING one. Both shipped in the same unreleased version, which is the only reason they share a number
 
 // A frame's payload may not exceed this. RUNSTATE (phase 5) is the only message
 // that will ever approach it; everything in phase 4 is under 128 bytes.
@@ -125,6 +125,31 @@ enum MsgType : uint8_t {
     MSG_RUNCATS  =21,   // host -> client: the run's cat-id list, in order
     MSG_OWNERS   =22,   // host -> client: which player drives which cat
     MSG_CLAIM    =23,   // client -> host: "give this cat to that player"
+    MSG_MAPSELECT=24,   // host -> client: the node the host's map marker is
+                        // walking to (MapScreen+0xA0 -> +0x60), so the client's
+                        // marker walks there too instead of jumping on arrival
+    MSG_PRESS    =25,   // either -> other: "I pressed the button named X on
+                        // node N; press yours". Event continue, chest items.
+};
+
+// The map selection. MapNode's click lambda (sub_140228700) does exactly two
+// writes -- marker+0x60 = node and MapScreen+0x1E7 = flag -- and the marker
+// walks there by itself and calls EnterNode on arrival. Writing the same two
+// fields on the client is therefore the whole of "the client sees the host
+// move". `seed0` is the usual identity cross-check against a different map.
+struct MapSelectMsg {
+    uint32_t index      = 0;
+    uint32_t node_count = 0;
+    uint64_t seed0      = 0;
+    uint8_t  flag       = 0;   // MapScreen+0x1E7 as the host's click left it
+};
+
+// A button press to mirror. By NAME (Button+504), because the button objects
+// are per-process heap pointers and the names are authored. `node_seed` says
+// which node's screen it belongs to, so a press can never land on a later one.
+struct PressMsg {
+    uint64_t node_seed = 0;
+    char     name[48]  = {};
 };
 
 // WHO DRIVES WHICH CAT, by CatData id. Host-authoritative: the host's table is
@@ -1131,6 +1156,20 @@ inline uint32_t enc_owners(uint8_t* p, uint32_t cap, const OwnersMsg& m) {
     return w.ok ? w.len : 0;
 }
 
+inline uint32_t enc_mapselect(uint8_t* p, uint32_t cap, const MapSelectMsg& m) {
+    Writer w(p, cap);
+    w.u8v(MSG_MAPSELECT);
+    w.u32v(m.index); w.u32v(m.node_count); w.u64v(m.seed0); w.u8v(m.flag);
+    return w.ok ? w.len : 0;
+}
+
+inline uint32_t enc_press(uint8_t* p, uint32_t cap, const PressMsg& m) {
+    Writer w(p, cap);
+    w.u8v(MSG_PRESS);
+    w.u64v(m.node_seed); w.str(m.name);
+    return w.ok ? w.len : 0;
+}
+
 inline uint32_t enc_claim(uint8_t* p, uint32_t cap, const ClaimMsg& m) {
     Writer w(p, cap);
     w.u8v(MSG_CLAIM);
@@ -1366,6 +1405,17 @@ inline bool dec_owners(Reader& r, OwnersMsg& m) {
     return r.ok;
 }
 
+inline bool dec_mapselect(Reader& r, MapSelectMsg& m) {
+    m.index = r.u32v(); m.node_count = r.u32v(); m.seed0 = r.u64v(); m.flag = r.u8v();
+    return r.ok;
+}
+
+inline bool dec_press(Reader& r, PressMsg& m) {
+    m.node_seed = r.u64v();
+    r.str(m.name, sizeof(m.name));
+    return r.ok;
+}
+
 inline bool dec_claim(Reader& r, ClaimMsg& m) {
     m.id = r.u64v(); m.owner = r.u8v();
     return r.ok;
@@ -1435,6 +1485,8 @@ inline const char* msg_name(uint8_t t) {
         case MSG_RUNCATS: return "RUNCATS";
         case MSG_OWNERS:  return "OWNERS";
         case MSG_CLAIM:   return "CLAIM";
+        case MSG_MAPSELECT: return "MAPSELECT";
+        case MSG_PRESS:   return "PRESS";
         default:          return "?";
     }
 }
