@@ -305,28 +305,72 @@ struct Guard {
 // that does not add up.
 void halt(const char* why);
 
-// Is the run the TUTORIAL? Read the way the game itself asks.
+// Is the run the TUTORIAL? Read off the save's own property table.
 //
-// MewDirector::IsTutorialRunActive is sub_1403AF880 on build 4127cd6a (the RVA
-// in CLAUDE.md is stale; found 2026-10-12 as the call PauseMenu::TryAbandonRun
-// makes right before it swaps in {POPUP_TRY_SKIP_TUTORIAL} @ 0x1402970A2). Its
-// whole body: no "Cutscene" scene loaded, `*(u32*)(MewDirector+0x6DC) == 0`,
-// and the save holds an "on_adventure" key. Inside a battle the first and last
-// are true by construction, so the field is the answer.
+// MewDirector::SkipTutorial's body (lambda at sub_1403AF5B0 on 4127cd6a) sets
+// three save properties to 1 -- "game_began", "tutorial_skipped" and
+// "butch_box_unlocked" -- through `operator[](MewDirector+0x38, key)`, then
+// writes `[node+0x30] = 1`. That is an MSVC std::unordered_map<std::string,
+// int64>: list nodes {next, prev, key std::string @+0x10, value @+0x30}, the
+// list's sentinel at map+0x08 and its size at map+0x10. "game_began" is the
+// game's own "past the tutorial" mark, so the tutorial is running exactly while
+// it is absent or zero.
 //
-// Both peers loaded the same save, so both read the same value -- which is what
-// lets the split below stay derived rather than negotiated.
-constexpr uintptr_t kDir_TutorialGate = 0x6DC;
-
+// An earlier attempt read MewDirector+0x6DC (what TryAbandonRun's helper
+// tests) and it was nonzero in the tutorial's first fight, so the split never
+// changed -- measured 2026-10-12. Hence the explicit validation below: a walk
+// that does not read as that table answers "not the tutorial", which is the
+// behaviour before any of this existed, and it says so once.
+//
+// Both peers loaded the same save, so both read the same answer -- which is
+// what lets the split stay derived rather than negotiated.
 static bool tutorial_run_active() {
     static const void** slot = nullptr;
+    static bool said = false;
     if (!slot) slot = (const void**)addr_of_data(D_MewDirectorPtr);
     if (!slot) return false;
-    const void* dir = nullptr;
+    const uint8_t* dir = nullptr;
     if (!mem_read(slot, &dir, sizeof(dir)) || !dir) return false;
-    uint32_t v = 1;
-    if (!mem_read((const uint8_t*)dir + kDir_TutorialGate, &v, sizeof(v))) return false;
-    return v == 0;
+
+    const uint8_t* map = dir + 0x38;
+    const uint8_t* head = nullptr;
+    uint64_t size = 0;
+    if (!mem_read(map + 0x08, &head, sizeof(head)) || !head ||
+        !mem_read(map + 0x10, &size, sizeof(size)) || size > 100000) {
+        if (!said) { said = true;
+            log_line("LOCKSTEP", "!! the save's property table did not read -- "
+                                 "treating this as NOT the tutorial"); }
+        return false;
+    }
+
+    const uint8_t* node = nullptr;
+    if (!mem_read(head, &node, sizeof(node))) return false;
+    uint64_t walked = 0, named = 0;
+    int64_t  began = 0;
+    bool     found = false;
+    while (node && node != head && walked <= size) {
+        ++walked;
+        char key[64];
+        if (mem_read_std_string(node + 0x10, key, sizeof(key))) {
+            ++named;
+            if (strcmp(key, "game_began") == 0) {
+                found = mem_read(node + 0x30, &began, sizeof(began));
+            }
+        }
+        if (!mem_read(node, &node, sizeof(node))) break;
+    }
+    const bool walk_ok = (node == head) && walked == size && (size == 0 || named > 0);
+    if (!walk_ok) {
+        if (!said) { said = true;
+            log_line("LOCKSTEP", "!! the save's property table walked %llu of %llu "
+                                 "entries (%llu named) -- treating this as NOT the "
+                                 "tutorial", (unsigned long long)walked,
+                     (unsigned long long)size, (unsigned long long)named); }
+        return false;
+    }
+    log_line_lvl(LogLevel::Trace, "LOCKSTEP", "save properties: %llu, game_began %s%lld",
+                 (unsigned long long)size, found ? "= " : "absent ", (long long)began);
+    return !found || began == 0;
 }
 
 // Defined below with the rest of the split handling; the snapshot calls it as
