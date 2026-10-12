@@ -490,7 +490,7 @@ static void apply_runcats(const char* when) {
     // Ids first, count last: a reader between the two sees the old count over
     // ids that are all valid cats.
     for (uint32_t i = 0; i < m.count; ++i)
-        mem_write(&rc.ids[i], &m.ids[i], sizeof(uint64_t));
+        mem_write(const_cast<uint64_t*>(&rc.ids[i]), &m.ids[i], sizeof(uint64_t));
     mem_write((uint8_t*)dir + kDir_CatIdCount, &m.count, sizeof(m.count));
     ++g.list_applied;
     g.list_have = false;
