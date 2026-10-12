@@ -105,6 +105,8 @@ enum Target : int {
                          // it) -- the client's dialog clicks are blocked here
     T_DlgBubble,         // the speech bubble tick (sub_1408F1930) -- where a
                          // click closes a line or skips its reveal
+    T_PipeDone,          // HousePipe::update's lambda_1 (_Do_call sub_140209240)
+                         // -- refused when the pipe is already empty
     T_COUNT
 };
 
@@ -583,6 +585,13 @@ static const TargetDesc kTargets[T_COUNT] = {
     // reveal (*(ctrl+0x48)+0x1AA) or closes the line (ctrl+0xF8);
     // dialog_and_autopass and tooltip_dialog close it with no click at all.
     { 0x008F1930, "DLGBUBBLE", "NPCDialogController speech bubble tick (sub_1408F1930)" },
+    // A stray coming out of the pipe plays an animation whose completion runs
+    // this: it reads the cat out of the pipe's slot (*(pipe+0x100))[0] and
+    // opens the map drawer on it (sub_140279920 reads that cat's +0x80). With
+    // the slot empty it dereferences null. On a client the other player can
+    // have taken the cat out of the pipe before the animation ends -- measured
+    // twice, C0000005 at 0x140279A22.
+    { 0x00209240, "PIPEDONE",  "HousePipe::update lambda_1 _Do_call (sub_140209240)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

@@ -114,6 +114,11 @@ void house_on_poop(uint8_t from, const HousePoopMsg& m);
 bool house_poop_clean(void* piece);      // T_PoopClean: false = swallow
 void house_poop_cells(void* grid, void* out_cells);   // T_PoopCells, after
 
+// HousePipe's "the stray is out" callback. False = the pipe is already empty
+// (the other player took the cat out first): skip it rather than open a drawer
+// on a null cat.
+bool house_pipe_done_allowed(void* impl);
+
 void house_shutdown();
 
 } // namespace mgmp

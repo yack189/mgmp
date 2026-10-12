@@ -869,6 +869,20 @@ void house_request_reload() {
 
 bool house_reload_pending() { return g.reload_at != 0; }
 
+bool house_pipe_done_allowed(void* impl) {
+    // impl+8 is the HousePipe; its slot list is *(pipe+0x100), the cat its [0].
+    void* pipe = nullptr;
+    void** slots = nullptr;
+    void* cat = nullptr;
+    if (!mem_read((const uint8_t*)impl + 8, &pipe, sizeof(pipe)) || !pipe) return true;
+    if (!mem_read((const uint8_t*)pipe + 0x100, &slots, sizeof(slots)) || !slots) return false;
+    if (!mem_read(slots, &cat, sizeof(cat))) return false;
+    if (cat) return true;
+    log_line("HOUSE", "the stray had already left the pipe when its arrival finished --"
+                      " skipped the drawer it would have opened on no cat");
+    return false;
+}
+
 bool house_night_replaying() { return g.night_at != 0 || g.night_go; }
 
 static void compare_night() {
