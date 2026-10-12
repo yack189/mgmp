@@ -305,6 +305,30 @@ struct Guard {
 // that does not add up.
 void halt(const char* why);
 
+// Is the run the TUTORIAL? Read the way the game itself asks.
+//
+// MewDirector::IsTutorialRunActive is sub_1403AF880 on build 4127cd6a (the RVA
+// in CLAUDE.md is stale; found 2026-10-12 as the call PauseMenu::TryAbandonRun
+// makes right before it swaps in {POPUP_TRY_SKIP_TUTORIAL} @ 0x1402970A2). Its
+// whole body: no "Cutscene" scene loaded, `*(u32*)(MewDirector+0x6DC) == 0`,
+// and the save holds an "on_adventure" key. Inside a battle the first and last
+// are true by construction, so the field is the answer.
+//
+// Both peers loaded the same save, so both read the same value -- which is what
+// lets the split below stay derived rather than negotiated.
+constexpr uintptr_t kDir_TutorialGate = 0x6DC;
+
+static bool tutorial_run_active() {
+    static const void** slot = nullptr;
+    if (!slot) slot = (const void**)addr_of_data(D_MewDirectorPtr);
+    if (!slot) return false;
+    const void* dir = nullptr;
+    if (!mem_read(slot, &dir, sizeof(dir)) || !dir) return false;
+    uint32_t v = 1;
+    if (!mem_read((const uint8_t*)dir + kDir_TutorialGate, &v, sizeof(v))) return false;
+    return v == 0;
+}
+
 // Defined below with the rest of the split handling; the snapshot calls it as
 // its last act, because the peer's CONTROL may already be sitting in the queue
 // by the time this side finally has a roster to check it against.
@@ -817,8 +841,21 @@ void snapshot_cats(void* turn_control) {
             log_line("LOCKSTEP", "!! no peer list yet -- deferring the split; if "
                                  "this repeats, PEERS never arrived");
         }
-        const SplitRange range = split_for(g.humans, P, pos);
+        // THE TUTORIAL IS THE HOST'S. Its script is single-player and runs on
+        // each peer separately, watching for ITS player's clicks -- with the
+        // cats split, the client's script sat waiting for a step only the
+        // host's cat could take and kept End Turn locked (measured 2026-10-12,
+        // turn 2 of the first tutorial battle: every hash agreed, the client
+        // simply could not end its turn). With every human cat on the host,
+        // the host's script sees exactly a single-player game and the client
+        // watches it played. Same arithmetic as one player, P = 1.
+        const bool tutorial = tutorial_run_active();
+        const SplitRange range = tutorial ? split_for(g.humans, 1, pos == 0 ? 0 : 1)
+                                          : split_for(g.humans, P, pos);
         const uint32_t   mine  = range.count;
+        if (tutorial)
+            log_line("LOCKSTEP", "tutorial run -- every human cat goes to the host; %s",
+                     pos == 0 ? "this peer plays the tutorial" : "this peer watches it");
 
         uint32_t seen = 0;
         for (uint32_t i = 0; i < g.cat_count; ++i) {
@@ -827,7 +864,7 @@ void snapshot_cats(void* turn_control) {
             ++seen;
         }
 
-        if (mine == 0 && g.humans)
+        if (mine == 0 && g.humans && !tutorial)
             log_line("LOCKSTEP", "!! %u human cat(s) over %u player(s) leaves this "
                                  "peer (position %u) with none -- it will watch "
                                  "this battle", g.humans, P, pos);
