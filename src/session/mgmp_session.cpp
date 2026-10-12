@@ -521,6 +521,7 @@ void session_update() {
         party_pump();
         choice_pump();
         cursor_pump();
+        house_pump();
         return;
     }
 

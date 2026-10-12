@@ -633,6 +633,10 @@ LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // --- bring-up ---------------------------------------------------------------
 
+} // namespace (reopened below)
+void* ui_hwnd() { return (void*)g.hwnd; }
+namespace {
+
 HWND game_window() {
     HMODULE ogl = GetModuleHandleA("opengl32.dll");
     if (!ogl) return nullptr;

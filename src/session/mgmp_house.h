@@ -80,6 +80,21 @@ bool house_anim_allowed(void* animator, void* consumed_string);
 bool house_on_button_click(void* button);
 bool house_sign_refused_recently();   // for the on-screen notice
 
+// --- 3. THE END OF THE DAY -------------------------------------------------------
+//
+// The night is the host's alone: breeding, strays, fights, ageing all roll on
+// the simulation stream with nothing to re-seed it, so two houses rolling their
+// own nights would never be the same house again. The host's PassDay ends by
+// saving the house; a moment later -- once its night screens are done -- the
+// host sends that save as a FRESH pick, and the client, still standing in the
+// old day, goes out to the title screen and loads it (the same path that brings
+// it into a run), so both stand in the same new day.
+void house_on_day_passed(void* house);   // the PassDay hook, after the original
+void house_request_reload();             // client: a fresh save arrived in the house
+bool house_reload_pending();             // client: for the on-screen notice
+bool house_night_pending();              // host: night screens still up
+void house_pump();                       // once a frame from the session tick
+
 void house_shutdown();
 
 } // namespace mgmp

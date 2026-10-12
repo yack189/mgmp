@@ -95,6 +95,8 @@ enum Target : int {
                          // -- a mirrored cat's own AI may not change its anim
     T_HouseCatLate,      // glaiel::HouseCat late_update (slot 11) -- the cat-on-
                          // cat "swat" AI; skipped for a mirrored cat
+    T_HousePassDay,      // House::PassDay's body (sub_1401EF4D0, House*) -- the
+                         // night: breeding, strays, ageing, then the house save
     T_COUNT
 };
 
@@ -545,6 +547,13 @@ static const TargetDesc kTargets[T_COUNT] = {
     // at it through sub_1409AAAB0, and flags the cats it touches -- AI, so a
     // mirrored cat must not run it any more than its update.
     { 0x001FD8B0, "HOUSECATLATE", "glaiel::HouseCat::late_update (slot 11)" },
+    // The end of the day. Reached only through House::PassDay's lambda_1
+    // (sub_1401F8E10: `add rcx,8; jmp`), which EndDayTransition runs mid-fade,
+    // so its argument is the House*. Runs the whole night (sub_1401E8B40, the
+    // interstitials' contents) and ends by saving the house (sub_1403BDCF0:
+    // house_state, current_day, ...). After it returns the save on disk IS the
+    // new day.
+    { 0x001EF4D0, "PASSDAY",   "House::PassDay body (sub_1401EF4D0)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

@@ -657,6 +657,11 @@ void __fastcall h_HouseCatUpdate(void* self) {
     if (!house_cat_update(self)) return;
     o_HouseCatUpdate(self);
 }
+fn_this o_HousePassDay = nullptr;
+void __fastcall h_HousePassDay(void* house) {
+    o_HousePassDay(house);
+    house_on_day_passed(house);
+}
 fn_this o_HouseCatLate = nullptr;
 void __fastcall h_HouseCatLate(void* self) {
     if (!house_cat_late(self)) return;
@@ -848,6 +853,7 @@ const Binding kBindings[] = {
     { T_HouseCatUpdate,   (void*)&h_HouseCatUpdate,   (void**)&o_HouseCatUpdate },
     { T_HouseCatPhys,     (void*)&h_HouseCatPhys,     (void**)&o_HouseCatPhys },
     { T_HouseCatLate,     (void*)&h_HouseCatLate,     (void**)&o_HouseCatLate },
+    { T_HousePassDay,     (void*)&h_HousePassDay,     (void**)&o_HousePassDay },
     { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 

@@ -6,6 +6,10 @@
 #include "mgmp_mem.h"
 #include "mgmp_log.h"
 #include "mgmp_net.h"
+#include "mgmp_savefile.h"
+#include "mgmp_leave.h"
+#include "mgmp_ui.h"
+#include "mgmp_follow.h"
 
 #include <windows.h>
 #include <cmath>
@@ -140,6 +144,12 @@ struct State {
 
     uint32_t sent = 0, got = 0, puppeted = 0, swallowed_anims = 0, areas_moved = 0;
     ULONGLONG sign_refused_at = 0;
+
+    // The end of the day.
+    ULONGLONG day_passed_at  = 0;     // host: PassDay ran; publish when settled
+    ULONGLONG reload_at      = 0;     // client: told to reload into the new day
+    ULONGLONG last_escape    = 0;
+    uint32_t  escapes        = 0;
     uintptr_t base = 0;
     bool said_cats = false;
 };
@@ -612,14 +622,103 @@ bool house_on_button_click(void* button) {
         return true;
     if (!mem_read(impl, &vt, sizeof(vt))) return true;
     if (!g.base || vt != g.base + kRva_SignCallbackVt) return true;
+    // The night is rolled once, in the host's house: ask the host to press its
+    // sign. Whatever it does there -- end the day, or depart with a full box --
+    // reaches this peer as a fresh save.
     g.sign_refused_at = GetTickCount64();
-    log_line("HOUSE", "the day's-end / depart sign is the host's for now -- this press was"
-                      " ignored (each house would otherwise roll its own night)");
+    PressMsg m{};
+    m.node_seed = 0;                 // the house is no map node
+    strncpy_s(m.name, "EndDay_Sign", _TRUNCATE);
+    net_send_press(m);
+    log_line("HOUSE", "asked the host to press the day's-end sign -- the night is rolled"
+                      " once, in the host's house");
     return false;
 }
 
 bool house_sign_refused_recently() {
     return g.sign_refused_at && GetTickCount64() - g.sign_refused_at < 4000;
+}
+
+void house_on_day_passed(void*) {
+    if (!net_active() || net_role() != NetRole::Host) return;
+    g.day_passed_at = GetTickCount64();
+    log_line("HOUSE", "the night has passed and the house is saved -- the new day goes to"
+                      " the other player once the night's screens are done");
+}
+
+bool house_night_pending() { return g.day_passed_at != 0; }
+
+// HOST: a run that started from the shared house. Departing goes through the
+// act and class screens on the host alone; once the host stands on the map with
+// the run loaded, its save is that run and the client is sent it fresh -- the
+// same reload the end of the day uses.
+static bool s_was_in_house = false;
+
+void house_request_reload() {
+    if (g.reload_at) return;
+    g.reload_at   = GetTickCount64();
+    g.escapes     = 0;
+    g.last_escape = 0;
+    // Quit To Menu is pressed by mgmp_leave the moment the pause menu is up;
+    // the auto-Play and the save screen then load the host's new day, exactly
+    // as they load a run.
+    leave_request_local();
+    log_line("HOUSE", "the host ended the day -- going out to the title screen to load"
+                      " the new day");
+}
+
+bool house_reload_pending() { return g.reload_at != 0; }
+
+void house_pump() {
+    const ULONGLONG now = GetTickCount64();
+
+    // --- host: send the new day once the night is over ----------------------
+    // Not straight from PassDay: it runs mid-fade with the night's interstitial
+    // screens still to come, and the client reloading while the host is still
+    // reading them is fine -- but the save must have been written, which it
+    // has by then, and the house must be back, which it is once the
+    // Interstitial scene is gone.
+    if (g.day_passed_at && now - g.day_passed_at > 1500 &&
+        !leave_scene_live("Interstitial")) {
+        g.day_passed_at = 0;
+        if (net_active()) savefile_publish_fresh("the day ended");
+    }
+
+    if (net_active() && net_role() == NetRole::Host) {
+        if (house_active()) s_was_in_house = true;
+        else if (s_was_in_house && follow_on_map() && savefile_adventure_is_loaded()) {
+            s_was_in_house = false;
+            savefile_publish_fresh("the host departed from the house");
+        }
+    }
+
+    // --- client: get out to the title screen --------------------------------
+    if (!g.reload_at) return;
+    if (!leave_scene_live("House")) {          // out of the house: the rest is
+        g.reload_at = 0;                        // the save screen's job
+        return;
+    }
+    // Open the pause menu with Escape. There is no callable way in -- the menu
+    // is built when a person pauses (CLAUDE.md, "The pause menu") -- so press
+    // the key a person would. More than once: a first Escape may only close a
+    // panel the player had open.
+    if (now - g.last_escape < 1500) return;
+    if (g.escapes >= 8) {
+        if (g.escapes == 8) {
+            ++g.escapes;
+            log_line_lvl(LogLevel::Error, "HOUSE", "!! could not open the pause menu for"
+                         " the player -- press Esc and Quit To Menu to load the new day");
+        }
+        return;
+    }
+    HWND hwnd = (HWND)ui_hwnd();
+    if (!hwnd) return;
+    g.last_escape = now;
+    ++g.escapes;
+    const LPARAM down = 1 | (0x01 << 16);
+    const LPARAM up   = down | (1LL << 30) | (1LL << 31);
+    PostMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, down);
+    PostMessageW(hwnd, WM_KEYUP,   VK_ESCAPE, up);
 }
 
 void house_shutdown() {

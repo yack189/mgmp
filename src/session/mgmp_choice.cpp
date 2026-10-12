@@ -197,7 +197,8 @@ bool is_chest(const char* n) { return strncmp(n, "ChestButton_", 12) == 0; }
 // A press may only ever be repeated for one of these. A PRESS naming anything
 // else is refused: the other peer does not get to press arbitrary buttons here.
 bool mirrorable(const char* n) {
-    return is_exit(n) || is_chest(n) || strcmp(n, "Shop_ExitButton") == 0;
+    return is_exit(n) || is_chest(n) || strcmp(n, "Shop_ExitButton") == 0 ||
+           strcmp(n, "EndDay_Sign") == 0;      // the client asking the host to end the day
 }
 
 uint8_t self_peer() {
@@ -252,6 +253,9 @@ void press_push(uint64_t seed, const char* name, const char* why) {
     State::Press& p = g.pq[g.pq_n++];
     p = State::Press{};
     p.seed = seed;
+    // A press that belongs to no map node (the house's sign) is due at once,
+    // so the 30 s give-up clock runs for it like any other.
+    if (!seed) p.due = GetTickCount64();
     strncpy_s(p.name, name, _TRUNCATE);
     log_line("CHOICE", "will press '%s' here (%s)", name, why);
 }

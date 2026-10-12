@@ -98,6 +98,8 @@ static const SigTargetDesc kTargetSigs[] = {
     // `mov rdi,rcx; xor r14d,r14d; cmp [rcx+0D9h],r14b`.
     { 0x001FD8B0, "HOUSECATLATE",
       "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 68 A8 48 81 EC 18 01 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88 44 0F 29 88 78 FF FF FF 48 8B F9 45 33 F6 44 38 B1 D9 00 00 00" },
+    { 0x001EF4D0, "PASSDAY",
+      "48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 88 FE FF FF 48 81 EC 78 02 00 00 0F 29 B4 24 60 02 00 00 48 8B D9" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.

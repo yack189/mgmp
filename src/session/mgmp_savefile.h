@@ -142,4 +142,8 @@ void savefile_on_button_update(void* button);
 // Button::update hook, which a session started from the lobby installs late.
 void savefile_request_local_play();
 
+// HOST: send the save on disk again as a FRESH pick -- the client drops what it
+// has and loads it. Used when the day ends in the shared house.
+bool savefile_publish_fresh(const char* why);
+
 } // namespace mgmp

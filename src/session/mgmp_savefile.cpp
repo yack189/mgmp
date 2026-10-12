@@ -14,6 +14,8 @@
 #include "mgmp_catsync.h"
 #include "mgmp_invsync.h"
 #include "mgmp_runhist.h"
+#include "mgmp_leave.h"
+#include "mgmp_house.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -716,6 +718,13 @@ void savefile_pump() {
                  g.name);
 }
 
+bool savefile_publish_fresh(const char* why) {
+    ensure_state();
+    if (!g.on || g.is_client || !g.have_slot) return false;
+    log_line("SAVEFILE", "publishing the save again (%s)", why ? why : "?");
+    return publish(kNoPeer, /*fresh=*/true);
+}
+
 bool savefile_on_slot_click(void* ss, int slot) {
     ensure_state();
     if (!g.on || slot < 0) return true;
@@ -871,6 +880,9 @@ void savefile_on_message(const SaveFileMsg& m) {
 
     log_line("SAVEFILE", "<- host's save: slot %u '%s', %u bytes, hash %016llx",
              m.slot, m.name, m.size, (unsigned long long)h);
+
+    // In the shared house, a fresh save is the host's new day: go and load it.
+    if (m.fresh && leave_scene_live("House")) house_request_reload();
 }
 
 int savefile_autoselect(void* ss) {
