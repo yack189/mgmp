@@ -567,6 +567,15 @@ void* follow_map_update(void* map_screen) {
                      (unsigned long long)waited);
     }
 
+    // NOT OUT OF AN EVENT THIS PEER HAS NOT CLOSED. Closing it runs the game's
+    // end-of-node work, and that must happen before the next node re-seeds the
+    // stream, exactly as it does on the host -- see choice_event_open. The
+    // host has moved on, so close it for the player and follow once it is shut.
+    if (choice_event_open()) {
+        choice_request_event_exit();
+        return nullptr;
+    }
+
     uint32_t count = 0; void* data = nullptr;
     if (!read_nodes(map_screen, count, data)) return nullptr;   // not ready yet
 

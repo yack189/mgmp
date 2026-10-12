@@ -156,4 +156,21 @@ void choice_on_node_entered(uint64_t node_seed);
 // ChoiceMsg::node_seed.
 void choice_on_node_skipped(uint64_t node_seed);
 
+// CLIENT: is an event screen still up on this peer? True while WorldEvent::
+// update has ticked in the last few hundred ms. mgmp_follow will not take this
+// peer into the host's next node while it is: closing the event runs the
+// game's own end-of-node work, and doing that after the next node's EnterNode
+// has re-seeded the simulation stream shifts the stream under the next battle
+// (measured 2026-10-12: a rng-only turn-1 mismatch, every cat identical, on the
+// fight right after an event the client had not closed yet).
+bool choice_event_open();
+
+// CLIENT: press the event's "continue" (Event_ExitButton) for this player,
+// because the host has already moved on. Honoured by the next Button::update
+// of that button, through the same Button::Click the auto-Play uses.
+void choice_request_event_exit();
+
+// From the Button::update hook, every button, every frame.
+void choice_on_button_update(void* button);
+
 } // namespace mgmp

@@ -583,6 +583,9 @@ void __fastcall h_ButtonUpdate(void* self) {
     // INTO the host's run, Quit To Menu in the pause sidebar gets it back
     // OUT when the host has left. Same slot, same trampoline reasoning.
     leave_on_button_update(self);
+
+    // A client still reading an event the host has already left.
+    choice_on_button_update(self);
 }
 
 // The aim preview turns the acting cat while a decision is held, writing the

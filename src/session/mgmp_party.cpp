@@ -306,6 +306,24 @@ uint64_t party_catdata_id(const void* cat) {
     return id;
 }
 
+uint64_t party_find_run_cat(const void* obj, uint32_t scan) {
+    if (!obj || !scan || scan > 0x2000) return 0;
+    Run r;
+    if (!read_run(r)) return 0;
+    static uint8_t buf[0x2000];
+    if (!mem_read(obj, buf, scan)) return 0;
+    int hit = -1;
+    for (uint32_t off = 0; off + 8 <= scan; off += 8) {
+        const void* p = *(const void* const*)(buf + off);
+        for (uint32_t j = 0; j < r.count; ++j) {
+            if (r.cats[j] != p) continue;
+            if (hit >= 0 && hit != (int)j) return 0;   // two cats -- ambiguous
+            hit = (int)j;
+        }
+    }
+    return hit >= 0 ? r.ids[hit] : 0;
+}
+
 bool party_owns_catdata(const void* cat) {
     const uint64_t id = party_catdata_id(cat);
     if (!id) return false;

@@ -113,6 +113,12 @@ struct State {
     uint32_t applied   = 0;
     uint32_t swallowed = 0;
 
+    // The event screen's liveness, and the client's "press continue for me".
+    ULONGLONG event_tick = 0;
+    bool      want_exit  = false;
+    ULONGLONG exit_last  = 0;
+    void    (*button_click)(void*, bool) = nullptr;
+
     CRITICAL_SECTION cs;
     bool cs_ready = false;
 };
@@ -241,11 +247,21 @@ bool inject_level(uint32_t index) {
 
 // Shared by both apply ticks.
 // The cat a level-up screen is for, by CatData id. 0 if unreadable.
+//
+// LevelUpScreen+160 was documented as the subject CatData* on an older build;
+// on 4127cd6a its first word read as 2ad055323c59f0ca, not a cat id (measured
+// 2026-10-12), so the owner check silently fell back to "the host picks". The
+// screen is searched for a pointer to one of the run's cats instead -- the same
+// discovery that links a battle Character to its CatData -- and the documented
+// offset is only a second opinion.
 uint64_t level_subject(const void* screen) {
+    if (!screen) return 0;
+    if (const uint64_t id = party_find_run_cat(screen, 0x400)) return id;
     const void* cat = nullptr;
-    if (!screen || !mem_read((const uint8_t*)screen + kLvl_Subject, &cat, sizeof(cat)) || !cat)
+    if (!mem_read((const uint8_t*)screen + kLvl_Subject, &cat, sizeof(cat)) || !cat)
         return 0;
-    return party_catdata_id(cat);
+    const uint64_t id = party_catdata_id(cat);
+    return (id && party_owner(id) != kNoPeer) ? id : 0;
 }
 
 // Does THIS peer pick this level-up? The cat's owner does (mgmp_party). A cat
@@ -502,6 +518,7 @@ void choice_on_event_update(void* world_event) {
     if (!g.on || !world_event) return;
     Guard guard;
     g.world_event = world_event;
+    g.event_tick = GetTickCount64();
     if (g.is_client) apply_pending(kChoiceEvent, world_event);
 }
 
@@ -690,6 +707,42 @@ void choice_on_node_skipped(uint64_t node_seed) {
         g.pending[kind]        = false;
         g.pending_warned[kind] = false;
     }
+}
+
+// --- following the host out of an event ------------------------------------
+
+bool choice_event_open() {
+    if (!g.on || !g.event_tick) return false;
+    return GetTickCount64() - g.event_tick < 300;
+}
+
+void choice_request_event_exit() {
+    if (!g.on || !g.is_client) return;
+    // Not while the host's choice is still waiting to be applied: pressing
+    // continue on an event this peer has not answered would leave it unanswered.
+    if (g.pending[kChoiceEvent]) return;
+    if (!g.want_exit)
+        log_line("CHOICE", "the host has moved on -- closing this peer's event screen");
+    g.want_exit = true;
+}
+
+void choice_on_button_update(void* button) {
+    if (!g.want_exit || !button) return;
+    if (!choice_event_open()) { g.want_exit = false; return; }
+    if (!g.button_click) {
+        const uintptr_t click = addr_of_call(C_ButtonClick);
+        if (!click) { g.want_exit = false; return; }
+        g.button_click = (void(*)(void*, bool))click;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (now - g.exit_last < 500) return;      // one press, then give it time
+    char name[64];
+    if (!mem_read_std_string((const uint8_t*)button + kBtn_Name, name, sizeof(name)))
+        return;
+    if (strcmp(name, "Event_ExitButton") != 0) return;
+    g.exit_last = now;
+    log_line("CHOICE", "pressing '%s' to follow the host out of the event", name);
+    g.button_click(button, false);
 }
 
 } // namespace mgmp

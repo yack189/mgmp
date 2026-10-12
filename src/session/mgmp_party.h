@@ -59,6 +59,12 @@ uint8_t party_owner(uint64_t cat_id);
 bool party_owns_catdata(const void* cat);
 uint64_t party_catdata_id(const void* cat);   // 0 if unreadable
 
+// Which run cat does this game object refer to? Scans the first `scan` bytes of
+// `obj` for a pointer to one of the run's CatData objects and returns that
+// cat's id, 0 if none or more than one distinct cat is referenced. Used for
+// screens whose subject offset is not known on this build (the level-up).
+uint64_t party_find_run_cat(const void* obj, uint32_t scan);
+
 // For mgmp_lockstep's snapshot. `chars` are the human Characters in roster
 // order. Fills local_out[k] (k < humans) and returns true when the table could
 // decide every one; false means "use the automatic split".
