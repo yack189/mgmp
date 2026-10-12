@@ -2,6 +2,7 @@
 
 #include "mgmp_cursor.h"
 #include "mgmp_house.h"
+#include "mgmp_town.h"
 #include "mgmp_overlay.h"
 #include "mgmp_session.h"
 #include "mgmp_net.h"
@@ -478,6 +479,7 @@ void session_shutdown() {
     if (!g.started) return;
     cursor_shutdown();
     house_shutdown();
+    town_shutdown();
     party_shutdown();
     overlay_shutdown();
     savefile_shutdown();
@@ -522,6 +524,7 @@ void session_update() {
         choice_pump();
         cursor_pump();
         house_pump();
+        town_pump();
         return;
     }
 

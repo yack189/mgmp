@@ -744,6 +744,31 @@ int main() {
         check(r.pos == r.len, "HOUSENIGHT consumed exactly the frame");
     }
 
+    printf("\n-- TOWNPRESS and DIALOG round-trip --\n");
+    {
+        TownPressMsg m{}; m.request = 1; m.vt_rva = 0xF03688; m.ordinal = 3;
+        strcpy_s(m.name, "GenericButton"); strcpy_s(m.tag, "map");
+        m.has_rng = 1; for (int i = 0; i < 4; ++i) m.rng[i] = 0xABCDULL << i;
+        uint32_t n = enc_townpress(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_TOWNPRESS, "TOWNPRESS encodes with its type");
+        TownPressMsg o{};
+        check(dec_townpress(r, o) && o.request == 1 && o.vt_rva == 0xF03688 && o.ordinal == 3 &&
+              strcmp(o.name, "GenericButton") == 0 && strcmp(o.tag, "map") == 0 &&
+              o.has_rng == 1 && memcmp(o.rng, m.rng, 32) == 0, "TOWNPRESS fields survive");
+        check(r.pos == r.len, "TOWNPRESS consumed exactly the frame");
+    }
+    {
+        DialogMsg m{}; m.op = kDlgWake; m.cls = 1; m.step = -2;
+        uint32_t n = enc_dialog(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_DIALOG, "DIALOG encodes with its type");
+        DialogMsg o{};
+        check(dec_dialog(r, o) && o.op == kDlgWake && o.cls == 1 && o.step == -2,
+              "DIALOG fields survive");
+        check(r.pos == r.len, "DIALOG consumed exactly the frame");
+    }
+
     printf("\n-- MAPSELECT and PRESS round-trip --\n");
     {
         MapSelectMsg m{}; m.index = 17; m.node_count = 42;

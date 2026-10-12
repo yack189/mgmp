@@ -1,0 +1,560 @@
+// mgmp_town.cpp -- see mgmp_town.h.
+
+#include "mgmp_town.h"
+#include "mgmp_addresses.h"
+#include "mgmp_resolve.h"
+#include "mgmp_mem.h"
+#include "mgmp_log.h"
+#include "mgmp_net.h"
+#include "mgmp_leave.h"
+#include "mgmp_rng.h"
+
+#include <windows.h>
+#include <cstring>
+
+namespace mgmp {
+namespace {
+
+// Button::Click is `impl = *(Button+240); if (impl) (*(*impl + 16))(impl);`
+// -- slot 2 of the std::function _Impl is _Do_call, and the lambda's captures
+// start at impl+8. CLAUDE.md, "The main menu".
+constexpr uintptr_t kBtn_Impl   = 240;
+constexpr uintptr_t kImpl_DoCall = 16;
+// HouseDrawerPanel::init's lambda_1 (the drawer's tab) captures the panel at
+// impl+0x10; the panel keeps its own name at +0x88 ("cats", "build", "items",
+// "map"), the std::string HouseDrawerPanel::init copies there.
+constexpr uintptr_t kImpl_Panel = 0x10;
+constexpr uintptr_t kPanel_Name = 0x88;
+
+// NPCDialogController (CLAUDE.md, "Hook points" -> DLGUPDATE / DLGBUBBLE).
+constexpr uintptr_t kDlg_Text     = 0x48;    // the bubble's text: +0x1A8 revealing,
+constexpr uintptr_t kText_Reveal  = 0x1A8;   //   +0x1AA "finish it now"
+constexpr uintptr_t kText_Skip    = 0x1AA;
+constexpr uintptr_t kDlg_Auto     = 0x60;    // lines close by themselves
+constexpr uintptr_t kDlg_Step     = 0xF4;
+constexpr uintptr_t kDlg_Closed   = 0xF8;
+constexpr uintptr_t kDlg_WaitFor  = 0x108;   // std::string
+constexpr uintptr_t kCmd_Name     = 0x88;    // the command's std::string name
+constexpr uintptr_t kScene_NoInput = 0x4DC;
+constexpr uintptr_t kComp_Scene    = 0x20;    // the scene a component lives in
+constexpr uintptr_t kScene_Name    = 1208;    // std::string (CLAUDE.md, scene list)
+
+constexpr uint32_t  kQueue        = 32;
+constexpr uint64_t  kPressGapMs   = 350;
+constexpr uint64_t  kPressDropMs  = 20000;
+constexpr uint64_t  kDlgDropMs    = 30000;
+constexpr uint32_t  kOrdSlots     = 128;
+// A dialog line open this long here, with nothing from the host to close it,
+// is one the host is not showing: let this player's own click through rather
+// than leave them on it forever.
+constexpr uint64_t  kDlgValveMs   = 40000;
+
+enum class Kind : uint8_t { None, Way, Office };
+
+// What a callback's class is, read from its own RTTI once per vtable.
+enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap };
+struct ClsCache { uintptr_t vt; Cls cls; };
+
+struct Key {
+    uint32_t vt_rva = 0;
+    uint16_t ordinal = 0;
+    char     name[40] = {};
+    char     tag[16]  = {};
+};
+
+struct Pending {
+    TownPressMsg m;
+    ULONGLONG    at = 0;
+};
+
+struct DlgPending {
+    DialogMsg m;
+    ULONGLONG at = 0;
+};
+
+struct State {
+    uintptr_t base = 0;
+    uintptr_t cur_scene = 0;          // address of the current-scene global
+
+    ClsCache  cls[64];
+    uint32_t  ncls = 0;
+
+    // ordinals: this frame's count of buttons per kind
+    uint32_t  frame = 0, ord_frame = ~0u;
+    uint64_t  ord_key[kOrdSlots] = {};
+    uint16_t  ord_n[kOrdSlots] = {};
+    uint32_t  ord_used = 0;
+    void*     cur_btn = nullptr;
+    uint16_t  cur_ord = 0;
+    Cls       cur_cls = Cls::Unknown;
+
+    bool      office = false;          // the NPCOffice scene is up here
+    bool      injecting = false;
+
+    Pending   pq[kQueue];
+    uint32_t  pq_n = 0;
+    ULONGLONG press_last = 0;
+
+    DlgPending dq[kQueue];
+    uint32_t   dq_n = 0;
+
+    // host: what the dialog looked like before the original ran
+    bool      pre_wait[2] = {};
+    uint8_t   pre_closed = 0, pre_skip = 0;
+    bool      pre_dialog = false;
+
+    // client: the input blocks raised around dialog updates
+    uintptr_t blk_scene[4] = {};
+    uint8_t   blk_saved[4] = {};
+    uint32_t  blk_depth = 0;
+
+    // client: a line that has stood open with nothing from the host
+    ULONGLONG line_since = 0;
+    bool      said_valve = false;
+
+    uint32_t  sent = 0, done = 0, asked = 0, dropped = 0;
+    uint32_t  dlg_sent = 0, dlg_done = 0, dlg_dropped = 0;
+    bool      said_block = false;
+};
+
+State g;
+
+bool is_host()   { return net_active() && net_role() == NetRole::Host; }
+bool is_client() { return net_active() && net_role() == NetRole::Client; }
+
+uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ULL) {
+    const uint8_t* b = (const uint8_t*)p;
+    for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
+// .?AV<lambda_1>@?6??init@HouseDrawerPanel@glaiel@@... -- the enclosing
+// function's class is in the lambda's own type name.
+Cls class_of(uintptr_t vt) {
+    if (!vt || !g.base) return Cls::Other;
+    for (uint32_t i = 0; i < g.ncls; ++i) if (g.cls[i].vt == vt) return g.cls[i].cls;
+    Cls c = Cls::Other;
+    uintptr_t col = 0;
+    uint32_t td_rva = 0;
+    if (mem_read((const void*)(vt - 8), &col, sizeof(col)) && col &&
+        mem_read((const void*)(col + 12), &td_rva, sizeof(td_rva)) && td_rva) {
+        char nm[200] = {};
+        if (mem_read((const void*)(g.base + td_rva + 0x10), nm, sizeof(nm) - 1)) {
+            nm[sizeof(nm) - 1] = 0;
+            if (strstr(nm, "HouseDrawerPanel")) c = Cls::Drawer;
+            else if (strstr(nm, "NPCMapDrawer")) c = Cls::NpcMap;
+        }
+    }
+    if (g.ncls < 64) g.cls[g.ncls++] = ClsCache{ vt, c };
+    return c;
+}
+
+void* impl_of(void* button) {
+    void* impl = nullptr;
+    if (!mem_read((const uint8_t*)button + kBtn_Impl, &impl, sizeof(impl))) return nullptr;
+    return impl;
+}
+
+// The kind-identity of a button: callback class, name, tag. No ordinal yet.
+bool key_of(void* button, Key& k, Cls& cls) {
+    k = Key{};
+    cls = Cls::Unknown;
+    void* impl = impl_of(button);
+    uintptr_t vt = 0;
+    if (!impl || !mem_read(impl, &vt, sizeof(vt)) || !vt || vt <= g.base) return false;
+    k.vt_rva = (uint32_t)(vt - g.base);
+    if (!mem_read_std_string((const uint8_t*)button + kBtn_Name, k.name, sizeof(k.name)))
+        k.name[0] = 0;
+    cls = class_of(vt);
+    if (cls == Cls::Drawer) {
+        void* panel = nullptr;
+        if (mem_read((const uint8_t*)impl + kImpl_Panel, &panel, sizeof(panel)) && panel)
+            mem_read_std_string((const uint8_t*)panel + kPanel_Name, k.tag, sizeof(k.tag));
+    }
+    return true;
+}
+
+uint64_t kind_hash(const Key& k) {
+    uint64_t h = fnv(&k.vt_rva, sizeof(k.vt_rva));
+    h = fnv(k.name, strlen(k.name), h);
+    return fnv(k.tag, strlen(k.tag), h);
+}
+
+// Only the office's own buttons: the house's drawers underneath stay each
+// player's own even while an office is up.
+bool in_office_scene(void* button) {
+    void* scene = nullptr;
+    char nm[16];
+    return mem_read((const uint8_t*)button + kComp_Scene, &scene, sizeof(scene)) && scene &&
+           mem_read_std_string((const uint8_t*)scene + kScene_Name, nm, sizeof(nm)) &&
+           strcmp(nm, "NPCOffice") == 0;
+}
+
+Kind kind_of(void* button, const Key& k, Cls cls) {
+    if (cls == Cls::Drawer) return strcmp(k.tag, "map") == 0 ? Kind::Way : Kind::None;
+    if (cls == Cls::NpcMap) return Kind::Way;
+    if (g.office && in_office_scene(button)) return Kind::Office;
+    return Kind::None;
+}
+
+bool same(const TownPressMsg& m, const Key& k) {
+    return m.vt_rva == k.vt_rva && m.ordinal == k.ordinal &&
+           strcmp(m.name, k.name) == 0 && strcmp(m.tag, k.tag) == 0;
+}
+
+void fill(TownPressMsg& m, const Key& k) {
+    m.vt_rva = k.vt_rva;
+    m.ordinal = k.ordinal;
+    memcpy(m.name, k.name, sizeof(m.name));
+    memcpy(m.tag, k.tag, sizeof(m.tag));
+}
+
+void pq_pop() {
+    if (!g.pq_n) return;
+    memmove(&g.pq[0], &g.pq[1], (g.pq_n - 1) * sizeof(Pending));
+    --g.pq_n;
+}
+
+void dq_pop() {
+    if (!g.dq_n) return;
+    memmove(&g.dq[0], &g.dq[1], (g.dq_n - 1) * sizeof(DlgPending));
+    --g.dq_n;
+}
+
+// Run the button's own callback: exactly what Button::Click does after its
+// guards, without the guards -- the press already passed them on the peer that
+// made it.
+bool run_callback(void* button) {
+    void* impl = impl_of(button);
+    uintptr_t vt = 0, fn = 0;
+    if (!impl || !mem_read(impl, &vt, sizeof(vt)) || !vt) return false;
+    if (!mem_read((const void*)(vt + kImpl_DoCall), &fn, sizeof(fn)) || !fn) return false;
+    g.injecting = true;
+    ((void(__fastcall*)(void*))fn)(impl);
+    g.injecting = false;
+    return true;
+}
+
+void send_press(const Key& k, uint8_t request, bool with_rng) {
+    TownPressMsg m{};
+    fill(m, k);
+    m.request = request;
+    if (with_rng) {
+        if (uint64_t* st = rng_global_stream()) {
+            memcpy(m.rng, st, sizeof(m.rng));
+            m.has_rng = 1;
+        }
+    }
+    if (net_send_townpress(m)) {
+        if (request) ++g.asked; else ++g.sent;
+    }
+}
+
+// --- dialogs ------------------------------------------------------------------
+
+uint8_t dlg_class(void* ctrl) {
+    uintptr_t vt = 0;
+    if (!mem_read(ctrl, &vt, sizeof(vt)) || !vt) return 0;
+    uintptr_t col = 0;
+    uint32_t td_rva = 0;
+    char nm[64] = {};
+    if (mem_read((const void*)(vt - 8), &col, sizeof(col)) && col &&
+        mem_read((const void*)(col + 12), &td_rva, sizeof(td_rva)) && td_rva &&
+        mem_read((const void*)(g.base + td_rva + 0x10), nm, sizeof(nm) - 1))
+        return strstr(nm, "Tutorial") ? 1 : 0;
+    return 0;
+}
+
+bool wait_is_click(void* ctrl) {
+    char w[16];
+    return mem_read_std_string((const uint8_t*)ctrl + kDlg_WaitFor, w, sizeof(w)) &&
+           strcmp(w, "click") == 0;
+}
+
+void clear_wait(void* ctrl) {
+    uint8_t* s = (uint8_t*)ctrl + kDlg_WaitFor;
+    uint64_t cap = 0;
+    if (!mem_read(s + 24, &cap, sizeof(cap))) return;
+    uint8_t* chars = s;
+    if (cap > 15 && !mem_read(s, &chars, sizeof(chars))) return;
+    const uint64_t zero = 0;
+    const uint8_t nul = 0;
+    mem_write(s + 16, &zero, sizeof(zero));
+    if (chars) mem_write(chars, &nul, 1);
+}
+
+void* text_of(void* ctrl) {
+    void* t = nullptr;
+    mem_read((const uint8_t*)ctrl + kDlg_Text, &t, sizeof(t));
+    return t;
+}
+
+uint8_t rd8(const void* p, uintptr_t off) {
+    uint8_t v = 0;
+    if (p) mem_read((const uint8_t*)p + off, &v, 1);
+    return v;
+}
+
+void wr8(void* p, uintptr_t off, uint8_t v) {
+    if (p) mem_write((uint8_t*)p + off, &v, 1);
+}
+
+bool cmd_is_dialog(void* cmd) {
+    char n[16];
+    return cmd && mem_read_std_string((const uint8_t*)cmd + kCmd_Name, n, sizeof(n)) &&
+           strcmp(n, "dialog") == 0;
+}
+
+void send_dialog(uint8_t op, uint8_t cls, void* ctrl) {
+    DialogMsg m{};
+    m.op = op;
+    m.cls = cls;
+    mem_read((const uint8_t*)ctrl + kDlg_Step, &m.step, sizeof(m.step));
+    if (net_send_dialog(m)) ++g.dlg_sent;
+}
+
+} // namespace
+
+void town_set_base(uintptr_t base) {
+    g.base = base;
+    g.cur_scene = addr_of_data(D_CurScene);
+    if (!g.cur_scene)
+        log_line("TOWN", "!! the current-scene global did not resolve -- the other"
+                         " player's clicks on dialogs cannot be held back");
+}
+
+bool town_in_office() { return g.office; }
+
+// --- buttons --------------------------------------------------------------------
+
+void town_on_button_pre(void* button) {
+    g.cur_btn = nullptr;
+    if (!button || !net_active()) return;
+    if (g.ord_frame != g.frame) {
+        g.ord_frame = g.frame;
+        g.ord_used = 0;
+    }
+    Key k; Cls cls;
+    if (!key_of(button, k, cls)) return;
+    const uint64_t h = kind_hash(k);
+    uint16_t ord = 0;
+    uint32_t i = 0;
+    for (; i < g.ord_used; ++i) if (g.ord_key[i] == h) break;
+    if (i < g.ord_used) ord = g.ord_n[i]++;
+    else if (g.ord_used < kOrdSlots) { g.ord_key[i] = h; g.ord_n[i] = 1; ++g.ord_used; }
+    g.cur_btn = button;
+    g.cur_ord = ord;
+    g.cur_cls = cls;
+}
+
+bool town_on_button_click(void* button) {
+    if (!button || !net_active() || g.injecting) return true;
+    Key k; Cls cls;
+    if (!key_of(button, k, cls)) return true;
+    const Kind kind = kind_of(button, k, cls);
+    if (kind == Kind::None) return true;
+    k.ordinal = (g.cur_btn == button) ? g.cur_ord : 0;
+
+    if (is_host()) {
+        send_press(k, 0, true);
+        log_line_lvl(LogLevel::Trace, "TOWN", "-> pressed '%s' %s#%u (%s)", k.name, k.tag,
+                     (unsigned)k.ordinal, kind == Kind::Way ? "the way out" : "an office");
+        return true;
+    }
+    // A client asks; the host presses; the press comes back here.
+    send_press(k, 1, false);
+    log_line("TOWN", "asked the host to press '%s'%s%s -- %s", k.name[0] ? k.name : "?",
+             k.tag[0] ? " " : "", k.tag,
+             kind == Kind::Way ? "both players go" : "the host runs this screen");
+    return false;
+}
+
+void town_on_press(uint8_t from, const TownPressMsg& m) {
+    if (!net_active()) return;
+    // A request goes to the host; a press comes from it. Nothing else.
+    if (m.request ? !is_host() : !is_client()) return;
+    if (g.pq_n >= kQueue) {
+        ++g.dropped;
+        log_line("TOWN", "!! %u presses already waiting -- dropping '%s' from peer %u",
+                 g.pq_n, m.name, (unsigned)from);
+        return;
+    }
+    Pending& p = g.pq[g.pq_n++];
+    p.m = m;
+    p.at = GetTickCount64();
+}
+
+void town_on_button_post(void* button) {
+    if (!g.pq_n || !button || g.cur_btn != button) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now - g.press_last < kPressGapMs) return;
+    Key k; Cls cls;
+    if (!key_of(button, k, cls)) return;
+    k.ordinal = g.cur_ord;
+    Pending& p = g.pq[0];
+    if (!same(p.m, k)) return;
+
+    g.press_last = now;
+    const TownPressMsg m = p.m;
+    pq_pop();
+    if (m.request) {
+        // The host presses for the client, and says so like any press of its own.
+        send_press(k, 0, true);
+        log_line("TOWN", "pressing '%s' %s for the other player", k.name, k.tag);
+    } else {
+        if (m.has_rng)
+            if (uint64_t* st = rng_global_stream()) memcpy(st, m.rng, sizeof(m.rng));
+        log_line_lvl(LogLevel::Trace, "TOWN", "pressing '%s' %s#%u -- the host did",
+                     k.name, k.tag, (unsigned)k.ordinal);
+    }
+    if (run_callback(button)) ++g.done;
+}
+
+// --- dialogs ----------------------------------------------------------------------
+
+void town_dlg_update_pre(void* ctrl) {
+    if (!ctrl || !net_active()) return;
+    const uint8_t cls = dlg_class(ctrl);
+    if (is_host()) {
+        g.pre_wait[cls] = wait_is_click(ctrl);
+        return;
+    }
+    if (!is_client()) return;
+    if (g.dq_n && g.dq[0].m.op == kDlgWake && g.dq[0].m.cls == cls && wait_is_click(ctrl)) {
+        clear_wait(ctrl);
+        dq_pop();
+        ++g.dlg_done;
+    }
+    // Hold this player's clicks back for the length of the dialog's tick.
+    if (g.line_since && !g.dq_n && GetTickCount64() - g.line_since > kDlgValveMs) {
+        if (!g.said_valve) {
+            g.said_valve = true;
+            log_line("TOWN", "!! a dialog line has been open here for %llu s and the host"
+                             " has not moved it -- letting this player's own click close it",
+                     (unsigned long long)(kDlgValveMs / 1000));
+        }
+        return;
+    }
+    uintptr_t scene = 0;
+    if (g.cur_scene && mem_read((const void*)g.cur_scene, &scene, sizeof(scene)) && scene &&
+        g.blk_depth < 4) {
+        g.blk_scene[g.blk_depth] = scene;
+        g.blk_saved[g.blk_depth] = rd8((void*)scene, kScene_NoInput);
+        ++g.blk_depth;
+        wr8((void*)scene, kScene_NoInput, 1);
+        if (!g.said_block) {
+            g.said_block = true;
+            log_line("TOWN", "dialogs are advanced by the host -- this player's clicks on"
+                             " them are held back");
+        }
+    }
+}
+
+void town_dlg_update_post(void* ctrl) {
+    if (!ctrl || !net_active()) return;
+    if (is_client()) {
+        if (g.blk_depth) {
+            --g.blk_depth;
+            wr8((void*)g.blk_scene[g.blk_depth], kScene_NoInput, g.blk_saved[g.blk_depth]);
+        }
+        return;
+    }
+    if (!is_host()) return;
+    const uint8_t cls = dlg_class(ctrl);
+    if (g.pre_wait[cls] && !wait_is_click(ctrl)) send_dialog(kDlgWake, cls, ctrl);
+    g.pre_wait[cls] = false;
+}
+
+void town_dlg_bubble_pre(void* ctrl, void* cmd) {
+    if (!ctrl || !net_active()) return;
+    void* text = text_of(ctrl);
+    const bool dialog = cmd_is_dialog(cmd);
+    if (is_host()) {
+        g.pre_dialog = dialog && !rd8(ctrl, kDlg_Auto);
+        g.pre_closed = rd8(ctrl, kDlg_Closed);
+        g.pre_skip   = rd8(text, kText_Skip);
+        return;
+    }
+    if (!is_client()) return;
+    if (!dialog || rd8(ctrl, kDlg_Closed)) g.line_since = 0;
+    else if (!g.line_since) g.line_since = GetTickCount64();
+    if (!g.dq_n || !dialog) return;
+    DlgPending& d = g.dq[0];
+    if (d.m.cls != dlg_class(ctrl)) return;
+    if (d.m.op == kDlgSkip) {
+        if (rd8(text, kText_Reveal)) wr8(text, kText_Skip, 1);
+        dq_pop();
+        ++g.dlg_done;
+        return;
+    }
+    if (d.m.op == kDlgClose && !rd8(ctrl, kDlg_Closed)) {
+        // Still typing here: finish the text first, close it next tick.
+        if (rd8(text, kText_Reveal)) { wr8(text, kText_Skip, 1); return; }
+        wr8(ctrl, kDlg_Closed, 1);
+        g.line_since = 0;
+        dq_pop();
+        ++g.dlg_done;
+    }
+}
+
+void town_dlg_bubble_post(void* ctrl, void* cmd) {
+    if (!ctrl || !is_host()) return;
+    (void)cmd;
+    const uint8_t cls = dlg_class(ctrl);
+    if (g.pre_dialog && !g.pre_closed && rd8(ctrl, kDlg_Closed))
+        send_dialog(kDlgClose, cls, ctrl);
+    else if (g.pre_dialog && !g.pre_skip && rd8(text_of(ctrl), kText_Skip))
+        send_dialog(kDlgSkip, cls, ctrl);
+}
+
+void town_on_dialog(uint8_t, const DialogMsg& m) {
+    if (!is_client()) return;
+    if (g.dq_n >= kQueue) {
+        ++g.dlg_dropped;
+        dq_pop();                       // the oldest is the least likely to matter
+    }
+    DlgPending& d = g.dq[g.dq_n++];
+    d.m = m;
+    d.at = GetTickCount64();
+}
+
+// --- once a frame ---------------------------------------------------------------
+
+void town_pump() {
+    ++g.frame;
+    if (!net_active()) { g.pq_n = 0; g.dq_n = 0; g.office = false; return; }
+    const bool office = leave_scene_live("NPCOffice");
+    if (office != g.office) {
+        g.office = office;
+        log_line_lvl(LogLevel::Trace, "TOWN", office ? "in an NPC's office" : "out of the office");
+        if (!office && is_client() && g.dq_n) {
+            // What was said in there is over.
+            g.dq_n = 0;
+        }
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (g.pq_n && now - g.pq[0].at > kPressDropMs) {
+        ++g.dropped;
+        log_line("TOWN", "!! '%s' %s never appeared on this peer in %llu s -- dropped",
+                 g.pq[0].m.name, g.pq[0].m.tag, (unsigned long long)(kPressDropMs / 1000));
+        pq_pop();
+    }
+    if (g.dq_n && now - g.dq[0].at > kDlgDropMs) {
+        ++g.dlg_dropped;
+        log_line("TOWN", "!! the host moved a dialog on (step %d) and this peer never"
+                         " reached that line -- dropped", g.dq[0].m.step);
+        dq_pop();
+    }
+}
+
+void town_shutdown() {
+    if (g.sent || g.asked || g.done || g.dlg_sent || g.dlg_done)
+        log_line_lvl(g.dropped || g.dlg_dropped ? LogLevel::Warn : LogLevel::Trace, "TOWN",
+                     "done: %u press(es) sent, %u asked of the host, %u done here, %u"
+                     " dropped; dialogs %u sent, %u applied, %u dropped",
+                     g.sent, g.asked, g.done, g.dropped, g.dlg_sent, g.dlg_done,
+                     g.dlg_dropped);
+    g.pq_n = 0; g.dq_n = 0; g.blk_depth = 0;
+}
+
+} // namespace mgmp

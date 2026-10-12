@@ -101,6 +101,10 @@ enum Target : int {
                          // cleaned on one peer is cleaned on the other
     T_PoopCells,         // FurnitureGrid free cells (sub_1402EA620) -- narrowed
                          // to the host's cell while the client spawns a poop
+    T_DlgUpdate,         // NPCDialogController::update (slot 10; Tutorial shares
+                         // it) -- the client's dialog clicks are blocked here
+    T_DlgBubble,         // the speech bubble tick (sub_1408F1930) -- where a
+                         // click closes a line or skips its reveal
     T_COUNT
 };
 
@@ -568,6 +572,17 @@ static const TargetDesc kTargets[T_COUNT] = {
     // iVec2D* data}. Its one consumer that matters is the poop spawn below,
     // which picks a random entry on TLS+0x178.
     { 0x002EA620, "POOPCELLS", "FurnitureGrid free cells (sub_1402EA620)" },
+    // Vtable 0x140ED64A8 (NPCDialogController) and 0x140F16200 (Tutorial)
+    // slot 10. A small script runner: ctrl+0xC8 the sequence, +0xF4 the step,
+    // +0xF8 "the line was closed", +0x108 the event a wait_for waits on, and
+    // every click it takes is read from the input action at *(ctrl+0x50)+0x308
+    // through sub_140985AF0 -- which answers "not pressed" for the whole scene
+    // while (current scene)+0x4DC is set.
+    { 0x008EE760, "DLGUPDATE", "NPCDialogController::update (slot 10)" },
+    // (ctrl, command). For a "dialog" command a click either finishes the text
+    // reveal (*(ctrl+0x48)+0x1AA) or closes the line (ctrl+0xF8);
+    // dialog_and_autopass and tooltip_dialog close it with no click at all.
+    { 0x008F1930, "DLGBUBBLE", "NPCDialogController speech bubble tick (sub_1408F1930)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

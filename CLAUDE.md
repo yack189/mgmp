@@ -1384,6 +1384,40 @@ anything. Both post-PassDay sim streams are compared and logged (`night
 AGREES`/`DIFFERS`), so whether the night is deterministic across two houses is
 measured, not assumed. **Not yet measured.**
 
+### The NPCs: the map drawer, the offices, their dialogs (measured on `4127cd6a`)
+
+The house's drawers are `HouseDrawerPanel`s; each tab is a `HouseButton` whose
+callback is `HouseDrawerPanel::init`'s lambda_1 (vtable `0x140EFE8B8`, `_Do_call`
+`0x140205270`), capturing the panel at impl`+0x10`. The panel's own name is at
+`+0x88`: `cats` (CatMenu), `build` (BuildMenu), `items` (StorageMenu), `map`
+(NPCMenu); `TrashMenu` has none. The `map` drawer is an `NPCMapDrawer`; its
+buttons are `GenericButton`s whose callbacks are `NPCMapDrawer::init` lambdas
+(`click_butch` @ `0x14027F550` and friends, then `GoToNPCOffice`), ending in the
+`NPCOffice` scene on top of `House`. **A callback's class is readable at run time
+from its own vtable's RTTI** (`vt-8` → COL, `COL+12` → type descriptor), which is
+how a button is named without pinning vtable addresses.
+
+`Button::Click` is `impl = *(Button+240); (*(*impl+16))(impl)` after its guards,
+so running `_Do_call` directly is a press without the guards.
+
+**Dialogs** run in `NPCDialogController` (vtable `0x140ED64A8`; `Tutorial`
+`0x140F16200` shares its update, slot 10 `0x1408EE760`), a small script runner:
+`+0xC8` sequence, `+0xF4` step, `+0xF8` line closed, `+0x108` the event a
+`wait_for` waits on (`sub_1408F2B20(ctrl, std::string)` consumes the string and
+clears the wait if it matches), `+0x60` auto-advance. Commands: `set_state`,
+`dialog`, `dialog_and_autopass`, `tooltip_dialog`, `next_sequence`, `wait_for`,
+`delay`, `wait_for_cancel`, `play_cutscene`. Every click is the input action
+`*(ctrl+0x50)+0x308` through `sub_140985AF0`, which returns "not pressed" while
+`(*0x1413C18F0)+0x4DC` is set — `0x1413C18F0` is the scene being updated. The
+bubble tick `sub_1408F1930(ctrl, cmd)`: on a `dialog` line a click sets
+`*(ctrl+0x48)+0x1AA` (finish the reveal) while `+0x1A8` (revealing) is set, else
+`ctrl+0xF8`; the autopass kinds set `+0xF8` with no click.
+
+Co-op: one player going goes both (the client asks, the host presses, the press
+comes back with the host's sim stream); inside an office the host presses; the
+client's dialog clicks are blocked for the tick and the host's closes, skips
+and wakes are applied in order. **Not yet run against a real session.**
+
 ### Where the run is standing — `MapScreen+0xA0` is the map MARKER
 
 `glaiel::MapNode::Click` @ `0x140227C90` **selects** a node, it does not enter

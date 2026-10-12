@@ -105,6 +105,10 @@ static const SigTargetDesc kTargetSigs[] = {
       "40 53 48 83 EC 50 48 8B D9 48 8B 89 D8 02 00 00 48 85 C9 0F 84 ? ? ? ? 4C 8B 41 18 48 83 C1 08" },
     { 0x002EA620, "POOPCELLS",
       "40 55 56 57 48 83 EC 30 48 8B F2 48 C7 02 00 00 00 00 48 C7 42 08 00 00 00 00 48 8B E9 8B 91 F0 00 00 00" },
+    { 0x008EE760, "DLGUPDATE",
+      "48 89 7C 24 20 55 48 8B EC 48 83 EC 60 48 83 B9 C8 00 00 00 00 48 8B F9" },
+    { 0x008F1930, "DLGBUBBLE",
+      "48 89 5C 24 08 48 89 74 24 20 55 57 41 55 41 56 41 57 48 8B EC 48 81 EC 80 00 00 00 4C 8B EA 4C 8B F1" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.
@@ -186,6 +190,10 @@ static const SigDataDesc kSigData[] = {
     { 0x013C5C04, "NdcRange",
       "48 89 5C 24 08 57 48 83 EC 60 0F 29 74 24 50 48 8B DA 0F 29 7C 24 40 44 0F 29 44 24 30 44 0F 29 4C 24 20 E8 ? ? ? ? 48 8B 0D ? ? ? ? 4C 8D 44 24 7C F3 44 0F 10 05 ? ? ? ? 48 8D 54 24 78 F3 44 0F 10 0D ? ? ? ? 33 FF",
       71, 75 },  // movss xmm9,[x_lo] at 0x140986F22 in sub_140986EE0
+    // The scene being updated right now; its +0x4DC blocks every input query.
+    { 0x013C18F0, "CurScene",
+      "48 8B 05 ? ? ? ? 48 85 C0 74 0C 80 B8 DC 04 00 00 00 74 03 32 C0 C3 F2 0F 10 49 40 0F 57 C0 66 0F 2F C8 73 08 F2 0F 10 0D ? ? ? ? 83 3D ? ? ? ? 02 B8 10 00 00 00",
+      3, 7 },  // the input query sub_140985AF0
 };
 static const int kSigDataCount = 3;
 

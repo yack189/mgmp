@@ -53,6 +53,7 @@ enum DataSym : int {
     D_NdcRange,          // float[4]: NDC x at the left / right edge, y at the
                          // bottom / top edge, of the content rect. The NDC a mouse
                          // fraction of the content rect maps to (sub_140986EE0)
+    D_CurScene,          // Scene*: the one being updated; +0x4DC blocks input
     D_COUNT
 };
 uintptr_t addr_of_data(DataSym d);

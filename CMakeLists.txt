@@ -68,6 +68,7 @@ add_library(mgmp SHARED
     src/session/mgmp_overlay.cpp
     src/session/mgmp_party.cpp
     src/session/mgmp_house.cpp
+    src/session/mgmp_town.cpp
     src/ui/mgmp_ui.cpp
     src/ui/mgmp_lobby.cpp
     # Dear ImGui, compiled straight into mgmp.dll -- same rule as minhook and

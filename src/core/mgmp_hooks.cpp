@@ -50,6 +50,7 @@
 #include "mgmp_lockstep.h"
 #include "mgmp_follow.h"
 #include "mgmp_house.h"
+#include "mgmp_town.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -638,6 +639,7 @@ typedef void (__fastcall* fn_click)(void* button, bool force);
 fn_click o_ButtonClick = nullptr;
 void __fastcall h_ButtonClick(void* button, bool force) {
     if (!house_on_button_click(button)) return;
+    if (!town_on_button_click(button)) return;
     if (!choice_on_button_click(button)) return;
     o_ButtonClick(button, force);
 }
@@ -662,6 +664,20 @@ void __fastcall h_HousePassDay(void* house) {
     house_before_pass_day(house);
     o_HousePassDay(house);
     house_on_day_passed(house);
+}
+// The dialogs: the client's clicks are held back for the length of the tick,
+// the host's are mirrored. See mgmp_town.h.
+fn_this o_DlgUpdate = nullptr;
+void __fastcall h_DlgUpdate(void* ctrl) {
+    town_dlg_update_pre(ctrl);
+    o_DlgUpdate(ctrl);
+    town_dlg_update_post(ctrl);
+}
+fn_this_ptr o_DlgBubble = nullptr;
+void __fastcall h_DlgBubble(void* ctrl, void* cmd) {
+    town_dlg_bubble_pre(ctrl, cmd);
+    o_DlgBubble(ctrl, cmd);
+    town_dlg_bubble_post(ctrl, cmd);
 }
 fn_this o_PoopClean = nullptr;
 void __fastcall h_PoopClean(void* piece) {
@@ -698,7 +714,9 @@ void __fastcall h_ButtonUpdate(void* self) {
     // Fires for every button in the game. Outside a combat-menu tick this is a
     // load and a branch: combatlock_on_button's first test is the scope flag.
     combatlock_on_button(self);
+    town_on_button_pre(self);
     o_ButtonUpdate(self);
+    town_on_button_post(self);
 
     // AFTER the original, and this one has to be. Button::update recomputes the
     // button's state and pushes it into the SWF before it returns, and
@@ -869,6 +887,8 @@ const Binding kBindings[] = {
     { T_HousePassDay,     (void*)&h_HousePassDay,     (void**)&o_HousePassDay },
     { T_PoopClean,        (void*)&h_PoopClean,        (void**)&o_PoopClean },
     { T_PoopCells,        (void*)&h_PoopCells,        (void**)&o_PoopCells },
+    { T_DlgUpdate,        (void*)&h_DlgUpdate,        (void**)&o_DlgUpdate },
+    { T_DlgBubble,        (void*)&h_DlgBubble,        (void**)&o_DlgBubble },
     { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 
@@ -1004,6 +1024,7 @@ int hooks_install() {
     lockstep_set_base(g_base);
     cursor_set_base(g_base);
     house_set_base(g_base);
+    town_set_base(g_base);
     choice_set_base(g_base);
     savefile_set_base(g_base);
     leave_set_base(g_base);

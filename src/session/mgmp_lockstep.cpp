@@ -17,6 +17,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_choice.h"
 #include "mgmp_house.h"
+#include "mgmp_town.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -2240,6 +2241,12 @@ void lockstep_pump() {
                 break;
             case MSG_HOUSENIGHT:
                 house_on_night(m.from, m.housenight);
+                break;
+            case MSG_TOWNPRESS:
+                town_on_press(m.from, m.townpress);
+                break;
+            case MSG_DIALOG:
+                town_on_dialog(m.from, m.dialog);
                 break;
 
             // Also not epoch-gated: a decision-screen choice belongs to a map
