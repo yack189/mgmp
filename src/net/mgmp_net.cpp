@@ -727,7 +727,11 @@ bool net_send_owners(const OwnersMsg& m) {
     return ok;
 }
 
-bool net_send_claim(const ClaimMsg& m) { MGMP_SEND_WITH(enc_claim, m); }
+bool net_send_claim(const ClaimMsg& m) {
+    uint8_t p[64];
+    const uint32_t n = enc_claim(p, sizeof(p), m);
+    return n && net_send(p, n);
+}
 
 bool net_send_runcats(const RunCatsMsg& m) {
     const uint32_t need = runcats_frame_size(m);
