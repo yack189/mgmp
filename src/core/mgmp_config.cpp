@@ -353,7 +353,15 @@ void config_load(const wchar_t* dll_dir) {
     wcsncpy_s(g_cfg.record_path, g_cfg.log_path, _TRUNCATE);
     if (wchar_t* dot = wcsrchr(g_cfg.record_path, L'.'))
         if (!wcschr(dot, L'\\')) *dot = 0;
-    wcsncat_s(g_cfg.record_path, L".mgr", _TRUNCATE);
+    // The process id goes in the name: the loopback test and the lobby's
+    // "two windows on one PC" both run two processes out of one folder, and a
+    // fixed name meant the second process's CreateFileW failed on the first's
+    // open handle -- one peer recorded, the other silently did not.
+    {
+        wchar_t pid[24];
+        swprintf_s(pid, L"_%lu.mgr", GetCurrentProcessId());
+        wcsncat_s(g_cfg.record_path, pid, _TRUNCATE);
+    }
 
     const bool net_configured = _stricmp(g_cfg.net_role, "host")   == 0 ||
                                 _stricmp(g_cfg.net_role, "client") == 0;
