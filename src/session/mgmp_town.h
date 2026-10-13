@@ -16,6 +16,18 @@
 // as it stood just before it, so whatever the press rolls -- a shop's stock,
 // an NPC's line -- rolls the same here.
 //
+// DEPARTING. The sign that departs (four cats in the box) is a way out like
+// the NPC map: either player presses it, both go into the class chooser, and
+// every press in there goes through the host and comes back to both -- either
+// player may pick the collars. The chooser's start button starts the HOST's
+// adventure only; a client waits in its chooser until the host's run is
+// published and then loads it (mgmp_house's reload, the same as a new day).
+//
+// THE ADVENTURE'S SHOPS are the host's. A client's presses there are refused;
+// the host's purchases are pressed on the client as well, with its stream, so a
+// candy bought by the host opens the same level-up screen on both machines and
+// the cat's owner picks it (mgmp_choice).
+//
 // DIALOGS. NPCDialogController (and Tutorial, which shares its update) reads
 // every click from one input action. On the client the scene's input is
 // blocked for the length of that update, and the host's clicks arrive instead:
@@ -49,6 +61,8 @@ void town_on_dialog(uint8_t from, const DialogMsg& m);
 
 void town_pump();          // once a frame
 bool town_in_office();     // for the on-screen notice
+bool town_awaiting_run();  // client: the host started the adventure, loading it
+bool town_shop_refused_recently();   // client: pressed in the host's shop
 void town_shutdown();
 
 } // namespace mgmp

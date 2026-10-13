@@ -199,5 +199,8 @@ void choice_pump();
 // gets the subject cat's name ("" if unknown), `mine` whether this player
 // answers it.
 bool choice_event_status(char* cat, uint32_t cap, bool* mine);
+// The level-up screen up right now: whose cat it is and whether THIS player
+// picks it. False when no uncommitted level-up screen is showing.
+bool choice_level_status(char* cat, uint32_t cap, bool* mine);
 
 } // namespace mgmp

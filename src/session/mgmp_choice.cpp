@@ -3,6 +3,7 @@
 #include "mgmp_choice.h"
 #include "mgmp_follow.h"
 #include "mgmp_party.h"
+#include "mgmp_leave.h"
 #include "mgmp_net.h"
 #include "mgmp_config.h"
 #include "mgmp_tuning.h"
@@ -79,6 +80,13 @@ struct State {
 
     void* world_event  = nullptr;   // latest WorldEvent*,    from its update
     void* level_screen = nullptr;   // latest LevelUpScreen*, from its update
+    // When this peer first saw the level-up screen it is showing now. A screen
+    // the cat's owner never got (a shop purchase that failed on the other
+    // machine) would otherwise wait forever; past kLevelValveMs this peer may
+    // pick it itself.
+    void*     level_seen     = nullptr;
+    ULONGLONG level_seen_at  = 0;
+    bool      level_valve_said = false;
 
     // A CHOICE can arrive before this peer's screen exists -- the client is
     // following the host into the node and may not have opened it yet. Hold it
@@ -378,15 +386,27 @@ uint64_t level_subject(const void* screen) {
 
 // Does THIS peer pick this level-up? The cat's owner does (mgmp_party). A cat
 // the table does not know falls back to the old rule -- the host picks.
-// A level-up bought in a shop (a LevelUp item, Shop::ObtainItem type 12) opens
-// on the one peer that bought it and nowhere else -- the other player is still
-// browsing. Nobody could answer it from the other side, so whoever has the
-// screen picks, and the cat travels to the other peer with the next per-node
-// cat push like any other change the host makes.
-bool shop_level_up() { return follow_here_type() == 12; }
+// A level-up whose owner never shows up. In an adventure shop the host's
+// purchase is pressed on the client too, so both machines open the same
+// level-up screen and the cat's owner picks, exactly as after a fight. If the
+// purchase did not happen on the owner's machine (its shop or its coins
+// differed), the owner has no screen and nobody would ever pick: after this
+// long, whoever has the screen may.
+constexpr ULONGLONG kLevelValveMs = 45000;
+
+void level_seen(void* screen) {
+    if (screen == g.level_seen) return;
+    g.level_seen = screen;
+    g.level_seen_at = GetTickCount64();
+    g.level_valve_said = false;
+}
+
+bool level_valve_open(void* screen) {
+    return screen && screen == g.level_seen && g.level_seen_at &&
+           GetTickCount64() - g.level_seen_at > kLevelValveMs && !g.pending[kChoiceLevelUp];
+}
 
 bool level_is_mine(const void* screen) {
-    if (shop_level_up()) return true;
     const uint64_t id = level_subject(screen);
     const uint8_t who = id ? party_owner(id) : kNoPeer;
     if (who == kNoPeer) return !g.is_client;
@@ -653,8 +673,16 @@ bool choice_on_level_select(void* screen, void* opt) {
 
     Guard guard;
     g.level_screen = screen;
+    level_seen(screen);
 
-    if (!level_is_mine(screen)) {
+    if (!level_is_mine(screen) && level_valve_open(screen)) {
+        if (!g.level_valve_said) {
+            g.level_valve_said = true;
+            log_line("CHOICE", "!! the cat's owner has not picked this level-up in %llu s --"
+                               " letting this player pick it (the owner's screen probably"
+                               " never opened)", (unsigned long long)(kLevelValveMs / 1000));
+        }
+    } else if (!level_is_mine(screen)) {
         ++g.swallowed;
         log_line("CHOICE", "suppressed a local level-up click -- the other player owns"
                            " this cat and picks its level-up");
@@ -691,12 +719,6 @@ bool choice_on_level_select(void* screen, void* opt) {
         return true;
     }
 
-    if (shop_level_up()) {
-        log_line("CHOICE", "level-up from a shop purchase -- picked here, not sent (the"
-                           " other player has no such screen)");
-        return true;
-    }
-
     ChoiceMsg m{};
     m.kind  = kChoiceLevelUp;
     m.index = found;
@@ -717,10 +739,10 @@ void choice_on_level_update(void* level_screen) {
     if (!g.on || !level_screen) return;
     Guard guard;
     g.level_screen = level_screen;
+    level_seen(level_screen);
     // Either role may be waiting for the other's pick now: the owner of the
     // cat decides, and that can be the client.
     if (!g.pending[kChoiceLevelUp]) return;
-    if (shop_level_up()) return;          // this screen is nobody else's to answer
 
     // select_option no-ops once LevelUpScreen+792 is set, so injecting into a
     // screen that already committed would be swallowed by the GAME rather than
@@ -1024,6 +1046,26 @@ void choice_pump() {
                  f.name);
         press_pop();
     }
+}
+
+bool choice_level_status(char* cat, uint32_t cap, bool* mine) {
+    if (cat && cap) cat[0] = '\0';
+    if (mine) *mine = false;
+    if (!g.on || !net_active() || !g.level_screen) return false;
+    if (!leave_scene_live("LevelUp")) return false;
+    Guard guard;
+    uint8_t committed = 0;
+    if (mem_read((const uint8_t*)g.level_screen + kLvl_Committed, &committed, 1) && committed)
+        return false;
+    const uint64_t id = level_subject(g.level_screen);
+    if (mine) *mine = level_is_mine(g.level_screen) || level_valve_open(g.level_screen);
+    if (cat && cap && id) {
+        static PartyRow rows[64];
+        const uint32_t n = party_rows(rows, 64);
+        for (uint32_t i = 0; i < n; ++i)
+            if (rows[i].id == id) { strncpy_s(cat, cap, rows[i].name, _TRUNCATE); break; }
+    }
+    return true;
 }
 
 bool choice_event_status(char* cat, uint32_t cap, bool* mine) {

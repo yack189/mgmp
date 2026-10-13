@@ -32,6 +32,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_choice.h"
 #include "mgmp_house.h"
+#include "mgmp_town.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -621,6 +622,18 @@ void draw_hud(const Content& c) {
         const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
         dl->AddRectFilled(a, b, col(kPanel, 0.88f), 10.0f * s);
         dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s), col(kCream), msg);
+    } else if (town_awaiting_run() || town_shop_refused_recently()) {
+        const bool run = town_awaiting_run();
+        const char* msg = run ? "Empezando la aventura del host... se carga en un momento"
+                              : "La tienda de la aventura la maneja el host";
+        ImFont* ft = L.font_title ? L.font_title : fb;
+        const float bpx = 20.0f * s;
+        const ImVec2 bs = ft->CalcTextSizeA(bpx, FLT_MAX, 0.0f, msg);
+        const ImVec2 a(c.x + (c.w - bs.x) * 0.5f - 18.0f * s, c.y + 18.0f * s);
+        const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
+        dl->AddRectFilled(a, b, col(kPanel, 0.88f), 10.0f * s);
+        dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s),
+                    col(run ? kCream : kOrange), msg);
     } else if (house_sign_refused_recently()) {
         const char* msg = "Le pediste al host que pase el día: se hace en su partida";
         ImFont* ft = L.font_title ? L.font_title : fb;
@@ -635,7 +648,27 @@ void draw_hud(const Content& c) {
         // which can never be up at the same time.
         char cat[48] = {};
         bool ours = false;
-        if (choice_event_status(cat, sizeof(cat), &ours) && have_other) {
+        if (choice_level_status(cat, sizeof(cat), &ours) && have_other) {
+            // Whose level-up this is -- after a fight, or a candy from the shop.
+            char banner[160];
+            if (ours)
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, cat[0]
+                            ? "Subida de nivel de %s: eliges tú" : "Subida de nivel: eliges tú",
+                            cat);
+            else if (cat[0])
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Subida de nivel de %s: elige %s",
+                            cat, other);
+            else
+                _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Subida de nivel: elige %s", other);
+            ImFont* ft = L.font_title ? L.font_title : fb;
+            const float bpx = 22.0f * s;
+            const ImVec2 bs = ft->CalcTextSizeA(bpx, FLT_MAX, 0.0f, banner);
+            const ImVec2 a(c.x + (c.w - bs.x) * 0.5f - 18.0f * s, c.y + 18.0f * s);
+            const ImVec2 b(a.x + bs.x + 36.0f * s, a.y + bs.y + 12.0f * s);
+            dl->AddRectFilled(a, b, col(kPanel, 0.82f), 10.0f * s);
+            dl->AddText(ft, bpx, ImVec2(a.x + 18.0f * s, a.y + 6.0f * s),
+                        col(ours ? kGreen : kCream), banner);
+        } else if (choice_event_status(cat, sizeof(cat), &ours) && have_other) {
             char banner[160];
             if (ours && cat[0])
                 _snprintf_s(banner, sizeof(banner), _TRUNCATE, "Evento de %s: decides tú", cat);

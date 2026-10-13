@@ -845,6 +845,14 @@ bool house_on_button_click(void* button) {
         return true;
     if (!mem_read(impl, &vt, sizeof(vt))) return true;
     if (!g.base || vt != g.base + kRva_SignCallbackVt) return true;
+    // With four cats in the box the same sign departs instead, and departing
+    // is mgmp_town's: both players go into the class chooser together.
+    {
+        char name[32] = {};
+        if (mem_read_std_string((const uint8_t*)button + kBtn_Name, name, sizeof(name)) &&
+            strcmp(name, "Depart_Sign") == 0)
+            return true;
+    }
     // The night is rolled once, in the host's house: ask the host to press its
     // sign. Whatever it does there -- end the day, or depart with a full box --
     // reaches this peer as a fresh save.

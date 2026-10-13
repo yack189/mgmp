@@ -1425,6 +1425,38 @@ comes back with the host's sim stream); inside an office the host presses; the
 client's dialog clicks are blocked for the tick and the host's closes, skips
 and wakes are applied in order. **Not yet run against a real session.**
 
+### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
+
+The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,
+`_Do_call` `0x1401F8EA0`) named `EndDay_Sign` or `Depart_Sign`. Its body calls
+`ButchBox::depart` (`sub_1400ADBF0`, `bool`); **false falls through to the
+end-of-day transition**, so a depart press on a machine whose box is not full
+ends that machine's day. The depart lambda (`sub_1400AFDB0`) transitions to the
+`ClassChooser` scene over `House`, or — with a queued scripted run at
+`*(MewDirector+0x5A8)+0x468` — starts that run directly (`sub_1403B1680`).
+
+In the chooser: collars are `InventoryButton_Collar` (`ClassTagBox::init`
+lambda_1, vt `0x140EE2010`), cats are stepped with `CatSelector_Right/Left`
+(`CatSelector::init` lambda_2, `0x140EDBA70`), and start is `CloseButton`
+(`ClassChooser::init` lambda_1, vt `0x140EE2250`, `_Do_call` `0x140141E40`): if
+any run cat is `Colorless` it raises a confirm whose yes is vt `0x140EE22C0`,
+else it adds the start transition (`sub_140142A60`).
+
+An adventure shop's buttons: `Shop_BuyButton` per item (`Shop::refresh_shopitem`
+lambda, vt `0x14111A8B8` → `sub_14079C1B0`: price check against
+`*(0x1413C7560)+0x148` coins, else `sub_14079A600` buys). **Item selection is not
+a separate button** — the census shows `Shop_BuyButton` then straight into
+`LevelUp` for a candy. `Shop_ExitButton` is `Shop::initShop`'s lambda
+(`0x14111A928`).
+
+Co-op: the depart sign is a way out (both go); the chooser's presses go through
+the host to both; the start runs on the host only and the client loads the
+host's run when it is published. A run's shop node (type 12, `Map` live, `House`
+gone, scene `Shop`) is the host's: client presses refused, host presses pressed
+on the client with the host's stream, so a candy opens the same level-up on
+both and the owner picks (45 s valve for the screen-holder if the owner never
+got it). **Not yet run against a real session.**
+
 ### Where the run is standing — `MapScreen+0xA0` is the map MARKER
 
 `glaiel::MapNode::Click` @ `0x140227C90` **selects** a node, it does not enter

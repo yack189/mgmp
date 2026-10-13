@@ -8,6 +8,7 @@
 #include "mgmp_net.h"
 #include "mgmp_leave.h"
 #include "mgmp_rng.h"
+#include "mgmp_follow.h"
 
 #include <windows.h>
 #include <cstring>
@@ -58,10 +59,19 @@ constexpr uint32_t  kOrdSlots     = 128;
 // than leave them on it forever.
 constexpr uint64_t  kDlgValveMs   = 40000;
 
-enum class Kind : uint8_t { None, Way, Office, InvOpen, Inv };
+// Way      leaving the house: the NPC map drawer, an NPC, the depart sign
+// Office   inside an NPC's office -- the host presses
+// InvOpen  the map's backpack; Inv inside it
+// Choose   the class chooser (ClassChooser scene, ClassTagBox collars,
+//          CatSelector arrows)
+// Start    the class chooser's start / its colorless-cat confirm: the host's
+//          starts the adventure; on a client it is never run -- the client
+//          loads the host's run when it is published, as after a day
+// RunShop  an adventure shop node: the host shops, the client watches
+enum class Kind : uint8_t { None, Way, Office, InvOpen, Inv, Choose, Start, RunShop };
 
 // What a callback's class is, read from its own RTTI once per vtable.
-enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap };
+enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap, Chooser, ChooserStart, Shop };
 struct ClsCache { uintptr_t vt; Cls cls; };
 
 struct Key {
@@ -128,6 +138,13 @@ struct State {
 
     // client: a line that has stood open with nothing from the host
     ULONGLONG line_since = 0;
+
+    // client: the host started the adventure from the class chooser; this
+    // peer waits for the host's run instead of starting its own
+    ULONGLONG awaiting_run = 0;
+    // client: a press in the host's shop was refused (for the notice)
+    ULONGLONG shop_refused_at = 0;
+    uint32_t  shop_refused = 0;
     bool      said_valve = false;
 
     uint32_t  sent = 0, done = 0, asked = 0, dropped = 0;
@@ -161,6 +178,14 @@ Cls class_of(uintptr_t vt) {
             nm[sizeof(nm) - 1] = 0;
             if (strstr(nm, "HouseDrawerPanel")) c = Cls::Drawer;
             else if (strstr(nm, "NPCMapDrawer")) c = Cls::NpcMap;
+            // ClassChooser::init's lambda_1 (the start button, vt 0x140EE2250)
+            // and the colorless-cat confirm nested inside it (0x140EE22C0)
+            // both carry "init@ClassChooser" in their type names.
+            else if (strstr(nm, "init@ClassChooser")) c = Cls::ChooserStart;
+            else if (strstr(nm, "ClassChooser") || strstr(nm, "ClassTagBox")) c = Cls::Chooser;
+            // Shop::refresh_shopitem (Shop_BuyButton), Shop::initShop
+            // (Shop_ExitButton), Shop::init (a chest's items).
+            else if (strstr(nm, "@Shop@glaiel")) c = Cls::Shop;
         }
     }
     if (g.ncls < 64) g.cls[g.ncls++] = ClsCache{ vt, c };
@@ -269,9 +294,27 @@ bool in_inventory_scene(void* button) {
            (strcmp(nm, "CatStatus") == 0 || strcmp(nm, "StorageItems") == 0);
 }
 
+// An adventure's shop node, standing on the map with the house gone. A chest
+// (treasure/furniturebox/foodbox) is also a Shop scene, and is mgmp_choice's.
+bool in_run_shop(void* button) {
+    if (follow_here_type() != 12) return false;
+    if (leave_scene_live("House") || !leave_scene_live("Map")) return false;
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Shop") == 0;
+}
+
+bool in_chooser_scene(void* button) {
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "ClassChooser") == 0;
+}
+
 Kind kind_of(void* button, const Key& k, Cls cls) {
     if (cls == Cls::Drawer) return strcmp(k.tag, "map") == 0 ? Kind::Way : Kind::None;
     if (cls == Cls::NpcMap) return Kind::Way;
+    if (strcmp(k.name, "Depart_Sign") == 0) return Kind::Way;
+    if (cls == Cls::ChooserStart) return Kind::Start;
+    if (cls == Cls::Chooser || in_chooser_scene(button)) return Kind::Choose;
+    if (in_run_shop(button)) return Kind::RunShop;
     if (g.office && in_office_scene(button)) return Kind::Office;
     if (is_backpack(button, k)) return Kind::InvOpen;
     if (g.inv_shared && in_inventory_scene(button) &&
@@ -417,6 +460,10 @@ void town_set_base(uintptr_t base) {
 }
 
 bool town_in_office() { return g.office; }
+bool town_awaiting_run() { return g.awaiting_run != 0; }
+bool town_shop_refused_recently() {
+    return g.shop_refused_at && GetTickCount64() - g.shop_refused_at < 4000;
+}
 
 // --- buttons --------------------------------------------------------------------
 
@@ -450,10 +497,24 @@ bool town_on_button_click(void* button) {
     const uint8_t want = cls == Cls::Drawer ? want_after_press(impl_of(button)) : 0;
 
     if (kind == Kind::InvOpen && is_host()) inv_opened();
+    if (kind == Kind::RunShop && !is_host()) {
+        // The host shops for both: one wallet, one stock, one purchase.
+        g.shop_refused_at = GetTickCount64();
+        if (g.shop_refused++ % 10 == 0)
+            log_line("TOWN", "a press in the shop was refused -- the host runs the"
+                             " adventure's shops; its purchases happen here too");
+        return false;
+    }
     if (is_host()) {
         send_press(k, 0, true, want);
         log_line_lvl(LogLevel::Trace, "TOWN", "-> pressed '%s' %s#%u (%s)", k.name, k.tag,
-                     (unsigned)k.ordinal, kind == Kind::Way ? "the way out" : "an office");
+                     (unsigned)k.ordinal,
+                     kind == Kind::Way ? "the way out" : kind == Kind::RunShop ? "the shop" :
+                     kind == Kind::Choose || kind == Kind::Start ? "the class chooser" :
+                     "an office");
+        if (kind == Kind::Start)
+            log_line("TOWN", "starting the adventure -- the other player will load it as"
+                             " soon as it is on the map");
         return true;
     }
     // A client asks; the host presses; the press comes back here.
@@ -468,6 +529,15 @@ void town_on_press(uint8_t from, const TownPressMsg& m) {
     if (!net_active()) return;
     // A request goes to the host; a press comes from it. Nothing else.
     if (m.request ? !is_host() : !is_client()) return;
+    // The host started its adventure from the class chooser. Not repeated here:
+    // a client's run is always the host's, loaded from its save -- this one
+    // waits in the chooser until that save arrives.
+    if (!m.request && g.base && m.vt_rva && class_of(g.base + m.vt_rva) == Cls::ChooserStart) {
+        g.awaiting_run = GetTickCount64();
+        log_line("TOWN", "the host started the adventure from the class chooser -- waiting"
+                         " for its run to load here");
+        return;
+    }
     if (g.pq_n >= kQueue) {
         ++g.dropped;
         log_line("TOWN", "!! %u presses already waiting -- dropping '%s' from peer %u",
@@ -637,6 +707,11 @@ void town_pump() {
         }
     }
     const ULONGLONG now = GetTickCount64();
+    // Out of the house and the chooser: the host's run is loading, or never
+    // came (2 minutes), and either way there is nothing left to wait for here.
+    if (g.awaiting_run && ((!leave_scene_live("House") && !leave_scene_live("ClassChooser")) ||
+                           now - g.awaiting_run > 120000))
+        g.awaiting_run = 0;
     if (g.inv_shared && now - g.inv_since > 3000 && !leave_scene_live("CatStatus") &&
         !leave_scene_live("StorageItems")) {
         g.inv_shared = false;
