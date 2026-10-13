@@ -693,6 +693,11 @@ void __fastcall h_PipeDone(void* impl) {
     if (!house_pipe_done_allowed(impl)) return;
     o_PipeDone(impl);
 }
+fn_this_ptr o_FurnPickup = nullptr;
+void __fastcall h_FurnPickup(void* piece, void* mouse) {
+    if (!furn_pickup_allowed(piece)) return;
+    o_FurnPickup(piece, mouse);
+}
 fn_this o_PoopClean = nullptr;
 void __fastcall h_PoopClean(void* piece) {
     if (!house_poop_clean(piece)) return;
@@ -904,6 +909,7 @@ const Binding kBindings[] = {
     { T_DlgUpdate,        (void*)&h_DlgUpdate,        (void**)&o_DlgUpdate },
     { T_DlgBubble,        (void*)&h_DlgBubble,        (void**)&o_DlgBubble },
     { T_PipeDone,         (void*)&h_PipeDone,         (void**)&o_PipeDone },
+    { T_FurnPickup,       (void*)&h_FurnPickup,       (void**)&o_FurnPickup },
     { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 

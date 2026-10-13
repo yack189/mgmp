@@ -758,6 +758,24 @@ int main() {
               o.orient_x == -1 && o.orient_y == 1 && o.order == 300042, "FURN fields survive");
         check(r.pos == r.len, "FURN consumed exactly the frame");
     }
+    {
+        FurnMsg m{}; m.op = kFurnPurse; m.coins = 1234; m.food = -5;
+        uint32_t n = enc_furn(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        r.u8v();
+        FurnMsg o{};
+        check(dec_furn(r, o) && o.op == kFurnPurse && o.coins == 1234 && o.food == -5,
+              "FURN purse needs no name and carries coins and food");
+        FurnMsg h{}; h.op = kFurnHold; strcpy_s(h.from_grid, "floor_main"); h.from_x = 3;
+        n = enc_furn(buf, sizeof(buf), h);
+        Reader r2(buf, n);
+        r2.u8v();
+        check(!dec_furn(r2, o), "FURN hold without a name is refused");
+        buf[1] = 9;
+        Reader r3(buf, n);
+        r3.u8v();
+        check(!dec_furn(r3, o), "FURN with an unknown op is refused");
+    }
 
     printf("\n-- TOWNPRESS and DIALOG round-trip --\n");
     {

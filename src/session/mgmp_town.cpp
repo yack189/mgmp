@@ -177,6 +177,11 @@ Cls class_of(uintptr_t vt) {
         if (mem_read((const void*)(g.base + td_rva + 0x10), nm, sizeof(nm) - 1)) {
             nm[sizeof(nm) - 1] = 0;
             if (strstr(nm, "HouseDrawerPanel")) c = Cls::Drawer;
+            // HouseDrawerUI::InitAux's two lambdas are the house's own shop
+            // buttons (vt 0x140EFE880 -> NPCMapDrawer::jackshop_shortcut,
+            // 0x140EFE8F0 -> tracyshop_shortcut): the same GoToNPCOffice the
+            // NPC map ends in, so the same way out.
+            else if (strstr(nm, "InitAux@HouseDrawerUI")) c = Cls::NpcMap;
             else if (strstr(nm, "NPCMapDrawer")) c = Cls::NpcMap;
             // ClassChooser::init's lambda_1 (the start button, vt 0x140EE2250)
             // and the colorless-cat confirm nested inside it (0x140EE22C0)
@@ -303,6 +308,14 @@ bool in_run_shop(void* button) {
     return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Shop") == 0;
 }
 
+// A shop opened from the house (Jack's, Tracy's furniture): one wallet, so the
+// host presses, the same as anything else in an office.
+bool in_house_shop(void* button) {
+    if (!leave_scene_live("House")) return false;
+    char nm[24];
+    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Shop") == 0;
+}
+
 bool in_chooser_scene(void* button) {
     char nm[24];
     return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "ClassChooser") == 0;
@@ -316,6 +329,7 @@ Kind kind_of(void* button, const Key& k, Cls cls) {
     if (cls == Cls::Chooser || in_chooser_scene(button)) return Kind::Choose;
     if (in_run_shop(button)) return Kind::RunShop;
     if (g.office && in_office_scene(button)) return Kind::Office;
+    if (in_house_shop(button)) return Kind::Office;
     if (is_backpack(button, k)) return Kind::InvOpen;
     if (g.inv_shared && in_inventory_scene(button) &&
         strncmp(k.name, "Button_PauseMenu_", 17) != 0)
@@ -461,6 +475,7 @@ void town_set_base(uintptr_t base) {
 
 bool town_in_office() { return g.office; }
 bool town_awaiting_run() { return g.awaiting_run != 0; }
+bool town_presses_pending() { return g.pq_n != 0; }
 bool town_shop_refused_recently() {
     return g.shop_refused_at && GetTickCount64() - g.shop_refused_at < 4000;
 }

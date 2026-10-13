@@ -107,6 +107,8 @@ enum Target : int {
                          // click closes a line or skips its reveal
     T_PipeDone,          // HousePipe::update's lambda_1 (_Do_call sub_140209240)
                          // -- refused when the pipe is already empty
+    T_FurnPickup,        // FurniturePiece pick-up (sub_1402ED690) -- refused
+                         // for a piece the other player has in hand
     T_COUNT
 };
 
@@ -592,6 +594,11 @@ static const TargetDesc kTargets[T_COUNT] = {
     // have taken the cat out of the pipe before the animation ends -- measured
     // twice, C0000005 at 0x140279A22.
     { 0x00209240, "PIPEDONE",  "HousePipe::update lambda_1 _Do_call (sub_140209240)" },
+    // void(FurniturePiece*, Vec2D* mouse). Its one caller (sub_1401A0880, the
+    // house's furniture click) calls it on a press over a piece and then only
+    // reads piece+0x2B0: refused, the piece is simply not held, and the caller
+    // shows its hover tooltip as for any piece under the mouse.
+    { 0x002ED690, "FURNPICKUP", "FurniturePiece pick up (sub_1402ED690)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

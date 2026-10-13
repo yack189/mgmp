@@ -111,6 +111,9 @@ static const SigTargetDesc kTargetSigs[] = {
       "48 89 5C 24 08 48 89 74 24 20 55 57 41 55 41 56 41 57 48 8B EC 48 81 EC 80 00 00 00 4C 8B EA 4C 8B F1" },
     { 0x00209240, "PIPEDONE",
       "40 57 48 83 EC 20 48 8B F9 48 8B 49 08 E8 ? ? ? ? 48 8B 4F 08 80 78 38 00 74 1D" },
+    // Added by hand 2026-10-13, unique in .text of 4127cd6a.
+    { 0x002ED690, "FURNPICKUP",
+      "48 89 5C 24 10 55 48 8B EC 48 83 EC 60 48 83 79 48 00 48 8B D9 0F 84 ? ? ? ? 0F 28 02 4C 8D 45 E0 48 8B 49 38" },
 };
 
 // INDEXED BY enum Call -- order is load-bearing.

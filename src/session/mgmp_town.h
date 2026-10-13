@@ -62,6 +62,7 @@ void town_on_dialog(uint8_t from, const DialogMsg& m);
 void town_pump();          // once a frame
 bool town_in_office();     // for the on-screen notice
 bool town_awaiting_run();  // client: the host started the adventure, loading it
+bool town_presses_pending(); // client: host presses still waiting to be made here
 bool town_shop_refused_recently();   // client: pressed in the host's shop
 void town_shutdown();
 

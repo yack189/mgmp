@@ -1451,7 +1451,29 @@ Co-op (`mgmp_furn`): each peer diffs its records every 200 ms and sends a moved
 record's name + old + new location (skipping one in a hand, or floating with no
 grid); the other finds the record by name + old location, unplaces and destroys
 its piece, rewrites the record, and rebuilds the piece if it stands somewhere.
-**Not yet run against a real session.**
+Measured 2026-10-13: works, except two players moving the same piece at once
+each kept their own placement.
+
+**One hand at a time.** `sub_1402ED690(piece, Vec2D*)` is the pick-up; its only
+caller, the house's furniture click `sub_1401A0880`, reads only `piece+0x2B0`
+after it, so refusing it (`T_FurnPickup`) leaves the piece unheld and shows the
+hover tooltip. A pick-up off a grid is sent at once (`FURN` op Hold, with the
+baseline location); the other peer sets the piece's Renderer (`piece+0x40`)
+alpha `+0x60` to 0.35 and refuses its pick-up until the Release that follows
+the move. A simultaneous grab is settled by the host: a client move whose
+`from` the host had itself just moved from (30 s ring) gets a corrective move
+back to the client, from the client's spot to the host's.
+
+**The house wallet is `HouseInventory+0xB4` (coins) / `+0xB0` (food)** —
+`Shop::BuyItem` @ `0x14079A3F0` reads `*(0x1413DA9A0)+0xB4` when `Shop+0x7B` (a
+house shop), else `Inventory+0x148`. The host sends both (`FURN` op Purse);
+the client overwrites its own whenever no host press is waiting.
+
+**The house's shop buttons** are `HouseDrawerUI::InitAux`'s lambdas (vt
+`0x140EFE880` → `NPCMapDrawer::jackshop_shortcut` `0x14027CCB0`, `0x140EFE8F0`
+→ `tracyshop_shortcut` `0x14027CD80`), both ending in `GoToNPCOffice`
+(`0x14027CE70`, office 4/5) — a way out like the NPC map. A button in a `Shop`
+scene while `House` is live is pressed by the host.
 
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 

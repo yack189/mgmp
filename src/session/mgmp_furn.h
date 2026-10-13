@@ -19,6 +19,19 @@
 //
 // Record ids are minted per process, so a record is found by name + location,
 // never by id. Poop is a record too and is mgmp_house's.
+//
+// ONE HAND AT A TIME. A piece picked up off a grid is told to the other player
+// at once (op Hold, with where it stood); there it turns see-through and the
+// pick-up (sub_1402ED690, T_FurnPickup) is refused until the Release that
+// follows the move. Two players who grab the same piece in the same instant
+// both put it down; the host then finds the client's move starting from where
+// the host had just moved it from, and sends the client a move from the
+// client's spot to the host's -- the host's placement wins.
+//
+// THE WALLET. The house's coins and food (HouseInventory+0xB4/+0xB0) are the
+// host's: it sends them on change and every 2 s, and the client writes them
+// over its own whenever no press of the host's is still waiting to be made
+// here. Shops opened from the house are pressed by the host (mgmp_town).
 #include <cstdint>
 
 namespace mgmp {
@@ -30,6 +43,8 @@ void furn_set_base(uintptr_t base);
 // other player did.
 void furn_on_house_update(void* house);
 void furn_on_message(uint8_t from, const FurnMsg& m);
+// T_FurnPickup: false = the other player has this piece in hand; refuse it.
+bool furn_pickup_allowed(void* piece);
 void furn_shutdown();
 
 } // namespace mgmp
