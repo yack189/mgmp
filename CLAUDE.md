@@ -1556,6 +1556,14 @@ title screen the way the end of the day does. lambda_5 (vt `0x140ED4900`) is
 the act tile, an ICF'd do-nothing `_Do_call`; lambda_6 (`0x140ED48C8`) is
 `Button_LowerDifficulty`. **Not yet run.**
 
+The difficulty widgets over each act are drawn by `sub_1400689E0` only when
+`*(*(MewDirector+0x5A8)+0x3E0)` is set; otherwise the act's maximum is taken as
+0 and they are hidden. Reported 2026-10-13: the host saw them, the client did
+not, on the same save — so that flag is not (only) the save's. Where it is
+set was not traced (`+0x3E0` byte writes are too many to read blind). Cosmetic:
+the difficulty that counts is the host's, because the client loads the host's
+run.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,
