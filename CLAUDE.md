@@ -1495,6 +1495,17 @@ that lambda) or `sub_1403B1680` (a queued scripted run from
 `T_RunStartScripted`), so the client follows the host through every screen
 and then loads the host's published run.
 
+`DoHouseStorageEquipFlow` is `sub_1403B0BB0`'s call to `sub_1403C49A0`: it
+get-or-creates the `StorageItems` scene (`sub_1409D4950`) and adds an
+**`InventoryScreen2`** (vtable `0x140F13D00`, ctor `sub_140387110`, init
+`sub_140349F70`) with the continuation lambda — the same screen class as the
+map's backpack. Measured 2026-10-13: both players reached it but equipped
+separately, because the sharing flag set at the chooser's start expired (3 s
+grace) during the teardown and swipe before the screen existed. Sharing is now
+scoped to the departure: from the start press until `StorageItems` has been up
+and gone. `sub_1403CC9A0` also builds a `StorageItems` scene (with
+`sub_1403C5060`); that one is not shared.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

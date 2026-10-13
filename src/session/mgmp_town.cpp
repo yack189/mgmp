@@ -117,6 +117,13 @@ struct State {
     // forward its presses to a peer that has no such screen.
     bool      inv_shared = false;
     ULONGLONG inv_since  = 0;
+    // Departing: from the class chooser's start until the equip screen it
+    // leads to (MewDirector::DoHouseStorageEquipFlow -> scene StorageItems,
+    // an InventoryScreen2 -- the backpack's own screen) has come and gone.
+    // The chooser is torn down and a swipe runs before that screen exists, so
+    // a 3-second grace was not enough to carry the sharing across.
+    ULONGLONG depart_at = 0;
+    bool      depart_saw_items = false;
     bool      injecting = false;
 
     Pending   pq[kQueue];
@@ -342,6 +349,14 @@ Kind kind_of(void* button, const Key& k, Cls cls) {
     return Kind::None;
 }
 
+void depart_started() {
+    if (!g.depart_at)
+        log_line("TOWN", "classes chosen -- the cats' items are next, shared: either player"
+                         " equips, every press through the host");
+    g.depart_at = GetTickCount64();
+    g.depart_saw_items = false;
+}
+
 void inv_opened() {
     if (!g.inv_shared)
         log_line("TOWN", "the backpack opens for both players -- either can equip; every"
@@ -491,6 +506,7 @@ bool town_run_start_allowed() {
     if (!is_client()) return true;
     g.awaiting_run = GetTickCount64();
     g.inv_shared = false;
+    g.depart_at = 0;
     log_line("TOWN", "the host is starting the adventure -- this player's own run is not"
                      " started; the host's loads here as soon as it is on the map");
     return false;
@@ -534,7 +550,7 @@ bool town_on_button_click(void* button) {
     // The class chooser's start leads to the house storage's equip screen
     // (MewDirector::DoHouseStorageEquipFlow, scene StorageItems): shared like
     // the backpack, so either player picks the cats' items.
-    if (kind == Kind::Start && is_host()) inv_opened();
+    if (kind == Kind::Start && is_host()) { inv_opened(); depart_started(); }
     if (kind == Kind::RunShop && !is_host()) {
         // The host shops for both: one wallet, one stock, one purchase.
         g.shop_refused_at = GetTickCount64();
@@ -609,6 +625,7 @@ void town_on_button_post(void* button) {
                      k.name, k.tag, (unsigned)k.ordinal);
     }
     if (strcmp(k.name, "Map_Backpack") == 0 || cls == Cls::ChooserStart) inv_opened();
+    if (cls == Cls::ChooserStart) depart_started();
     if (run_callback(button)) ++g.done;
 }
 
@@ -740,8 +757,22 @@ void town_pump() {
     if (g.awaiting_run && ((!leave_scene_live("House") && !leave_scene_live("ClassChooser")) ||
                            now - g.awaiting_run > 120000))
         g.awaiting_run = 0;
-    // Through the chooser and the act screen (and the swipe between them and
-    // the items), the shared equip screen is still to come or still up.
+    // Departing: the equip screen is shared for as long as it is up, however
+    // long the way to it took.
+    if (g.depart_at) {
+        const bool items = leave_scene_live("StorageItems");
+        if (items) {
+            if (!g.depart_saw_items)
+                log_line_lvl(LogLevel::Trace, "TOWN", "the cats' items screen is up -- shared");
+            g.depart_saw_items = true;
+            g.inv_shared = true;
+            g.inv_since = now;
+        } else if (g.depart_saw_items || now - g.depart_at > 60000) {
+            g.depart_at = 0;
+        } else if (leave_scene_live("ClassChooser") || leave_scene_live("ActSelection")) {
+            g.depart_at = now;          // still on the way there
+        }
+    }
     if (g.inv_shared && (leave_scene_live("ClassChooser") || leave_scene_live("ActSelection")))
         g.inv_since = now;
     if (g.inv_shared && now - g.inv_since > 3000 && !leave_scene_live("CatStatus") &&
