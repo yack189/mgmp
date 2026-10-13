@@ -193,6 +193,11 @@ static const SigTargetDesc kCallSigs[] = {
       "48 89 5C 24 10 48 89 6C 24 18 56 57 41 57 48 83 EC 20 48 8B 69" },
     { 0x001EF470, "House::EndDay (sub_1401EF470)",
       "48 83 EC 28 80 B9 B0 00 00 00 00 75 ? C6 81 B0 00 00 00 01 48 8B 05 ? ? ? ? 80 78 38 00" },
+    // Added by hand 2026-10-13, both unique in .text of 4127cd6a.
+    { 0x003B32D0, "MewDirector items at a location (sub_1403B32D0)",
+      "48 89 5C 24 18 48 89 54 24 10 55 56 57 48 81 EC 90 00 00 00 41 0F B6 F9 41 8B F0 48 8B EA 48 8B D9" },
+    { 0x00D4CB24, "the game's free (sub_140D4CB24)",
+      "C7 44 24 10 00 00 00 00 8B 44 24 10 E9 ? ? ? ? CC CC CC E9" },
 };
 
 // Globals, recovered from a referencing instruction's own

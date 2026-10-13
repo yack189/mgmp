@@ -71,7 +71,26 @@ constexpr uint64_t  kDlgValveMs   = 40000;
 enum class Kind : uint8_t { None, Way, Office, InvOpen, Inv, Choose, Start, RunShop };
 
 // What a callback's class is, read from its own RTTI once per vtable.
-enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap, Chooser, ChooserStart, Shop };
+enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap, Chooser, ChooserStart, Shop,
+                           ItemBox };
+
+// An inventory screen's item box (InventoryItemBox::init's lambda_1: its
+// capture at impl+8 is the box). The box: +0x38 its InventoryScreen2, +0x58
+// the item's object id -- minted per process, so never sent. The screen:
+// +0x58 the Inventory::Loc it shows. Every box of one slot shares one button
+// name ("InventoryButton_face"), so the item's own name rides in the tag:
+// counting boxes in update order alone matched a different face item on the
+// other machine (measured 2026-10-13 -- a parasite item's yes/no prompt came
+// up on one peer only, and nothing could close it).
+constexpr uintptr_t kImpl_Box     = 0x08;
+constexpr uintptr_t kBox_Screen   = 0x38;
+constexpr uintptr_t kBox_ItemId   = 0x58;
+constexpr uintptr_t kScreen_Loc   = 0x58;
+constexpr uintptr_t kItem_Name    = 0x08;
+constexpr uint32_t  kMaxItems     = 256;
+// A yes/no prompt the host never answers: this player's own click goes
+// through after this long, rather than leave a modal open forever.
+constexpr uint64_t  kPromptValveMs = 2500;
 struct ClsCache { uintptr_t vt; Cls cls; };
 
 struct Key {
@@ -92,11 +111,28 @@ struct DlgPending {
 };
 
 using fn_scene_list = void (__fastcall*)(void* scene, int type);
+struct ItemVec { uint32_t cap, count; void** data; };
+using fn_items_at  = ItemVec* (__fastcall*)(void* director, ItemVec* out, uint32_t loc, bool flag);
+using fn_game_free = void (__fastcall*)(void* p);
+
+struct ItemName { uint64_t id; char name[16]; };
 
 struct State {
     uintptr_t base = 0;
     fn_scene_list scene_list = nullptr;
     uintptr_t cur_scene = 0;          // address of the current-scene global
+    fn_items_at  items_at = nullptr;
+    fn_game_free game_free = nullptr;
+    void**       director_slot = nullptr;
+    // this frame's item names, for one screen's location
+    uint32_t  items_frame = ~0u;
+    uint32_t  items_loc = ~0u;
+    ItemName  items[kMaxItems];
+    uint32_t  nitems = 0;
+    // client: the last yes/no answer asked of the host
+    uint64_t  ask_hash = 0;
+    ULONGLONG ask_at = 0;
+    uint32_t  ask_done_mark = 0;
 
     ClsCache  cls[64];
     uint32_t  ncls = 0;
@@ -200,6 +236,7 @@ Cls class_of(uintptr_t vt) {
             // Shop::refresh_shopitem (Shop_BuyButton), Shop::initShop
             // (Shop_ExitButton), Shop::init (a chest's items).
             else if (strstr(nm, "@Shop@glaiel")) c = Cls::Shop;
+            else if (strstr(nm, "InventoryItemBox")) c = Cls::ItemBox;
         }
     }
     if (g.ncls < 64) g.cls[g.ncls++] = ClsCache{ vt, c };
@@ -253,6 +290,46 @@ void* impl_of(void* button) {
     return impl;
 }
 
+// The name of the item an inventory box shows, from the items the screen's own
+// lookup walks (sub_14034BDD0 does exactly this). Built once a frame per
+// location: every box asks every frame, for its ordinal.
+bool item_name(void* impl, char* out, size_t cap) {
+    out[0] = 0;
+    if (!g.items_at || !g.game_free || !g.director_slot) return false;
+    void* box = nullptr; void* screen = nullptr; void* director = nullptr;
+    uint64_t id = 0;
+    uint32_t loc = 0;
+    if (!mem_read((const uint8_t*)impl + kImpl_Box, &box, sizeof(box)) || !box) return false;
+    if (!mem_read((const uint8_t*)box + kBox_Screen, &screen, sizeof(screen)) || !screen)
+        return false;
+    if (!mem_read((const uint8_t*)box + kBox_ItemId, &id, sizeof(id))) return false;
+    if (!mem_read((const uint8_t*)screen + kScreen_Loc, &loc, sizeof(loc))) return false;
+    if (g.items_frame != g.frame || g.items_loc != loc) {
+        g.items_frame = g.frame;
+        g.items_loc = loc;
+        g.nitems = 0;
+        if (!mem_read(g.director_slot, &director, sizeof(director)) || !director) return false;
+        ItemVec v{};
+        g.items_at(director, &v, loc, false);
+        for (uint32_t i = 0; i < v.count && v.data && g.nitems < kMaxItems; ++i) {
+            void* item = nullptr;
+            if (!mem_read(v.data + i, &item, sizeof(item)) || !item) continue;
+            ItemName& e = g.items[g.nitems];
+            if (!mem_read(item, &e.id, sizeof(e.id))) continue;
+            if (!mem_read_std_string((const uint8_t*)item + kItem_Name, e.name, sizeof(e.name)))
+                e.name[0] = 0;
+            ++g.nitems;
+        }
+        if (v.data) g.game_free(v.data);
+    }
+    for (uint32_t i = 0; i < g.nitems; ++i) {
+        if (g.items[i].id != id) continue;
+        strncpy_s(out, cap, g.items[i].name, _TRUNCATE);
+        return out[0] != 0;
+    }
+    return false;
+}
+
 // The kind-identity of a button: callback class, name, tag. No ordinal yet.
 bool key_of(void* button, Key& k, Cls& cls) {
     k = Key{};
@@ -268,6 +345,8 @@ bool key_of(void* button, Key& k, Cls& cls) {
         void* panel = nullptr;
         if (mem_read((const uint8_t*)impl + kImpl_Panel, &panel, sizeof(panel)) && panel)
             mem_read_std_string((const uint8_t*)panel + kPanel_Name, k.tag, sizeof(k.tag));
+    } else if (cls == Cls::ItemBox) {
+        item_name(impl, k.tag, sizeof(k.tag));
     }
     return true;
 }
@@ -493,6 +572,12 @@ void town_set_base(uintptr_t base) {
     g.base = base;
     g.scene_list = (fn_scene_list)addr_of_call(C_SceneList);
     g.cur_scene = addr_of_data(D_CurScene);
+    g.items_at = (fn_items_at)addr_of_call(C_ItemsAt);
+    g.game_free = (fn_game_free)addr_of_call(C_GameFree);
+    g.director_slot = (void**)addr_of_data(D_MewDirectorPtr);
+    if (!g.items_at || !g.game_free || !g.director_slot)
+        log_line("TOWN", "!! the inventory item lookup did not resolve -- shared inventory"
+                         " boxes are matched by position only");
     if (!g.cur_scene)
         log_line("TOWN", "!! the current-scene global did not resolve -- the other"
                          " player's clicks on dialogs cannot be held back");
@@ -574,6 +659,26 @@ bool town_on_button_click(void* button) {
         if (kind == Kind::Start)
             log_line("TOWN", "classes chosen -- both players go on to the cats' items");
         return true;
+    }
+    // A yes/no prompt the host is not showing: nothing would ever answer this
+    // player's click. A second click on the same button, after the host has
+    // had time to answer the first and has not, goes through here.
+    char snm[24];
+    const bool prompt = scene_name(button, snm, sizeof(snm)) && strcmp(snm, "YesNoPrompt") == 0;
+    if (prompt) {
+        const uint64_t h = kind_hash(k) ^ k.ordinal;
+        const ULONGLONG now = GetTickCount64();
+        if (h == g.ask_hash && g.ask_done_mark == g.done && now - g.ask_at > kPromptValveMs) {
+            g.ask_hash = 0;
+            log_line("TOWN", "!! the host never answered the prompt here (it is not showing"
+                             " it) -- '%s' is pressed on this machine only", k.name);
+            return true;
+        }
+        if (h != g.ask_hash || g.ask_done_mark != g.done) {
+            g.ask_hash = h;
+            g.ask_at = now;
+            g.ask_done_mark = g.done;
+        }
     }
     // A client asks; the host presses; the press comes back here.
     send_press(k, 1, false, want);

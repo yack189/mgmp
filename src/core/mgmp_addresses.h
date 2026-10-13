@@ -723,6 +723,11 @@ enum Call : int {
     C_StrAssign,             // std::string*(std::string*, const char*, size_t)
     C_HouseEndDay,           // void(House*) -- the sign's end of the day: sets
                              // House+0xB0 and starts the fade into PassDay
+    C_ItemsAt,               // CustomVector<Equipment*>*(MewDirector*, out,
+                             // Inventory::Loc, bool) -- every item the run's
+                             // cats wear, then the items at that location
+    C_GameFree,              // the game's free (sub_140D4CB24) -- for the
+                             // vector C_ItemsAt allocates
     C_COUNT
 };
 
@@ -979,6 +984,14 @@ static const CallDesc kCalls[C_COUNT] = {
     { 0x001ACA10, "FurniturePiece create from record (sub_1401ACA10)" },
     { 0x000520D0, "std::string::assign(const char*, size_t) (sub_1400520D0)" },
     { 0x001EF470, "House::EndDay (sub_1401EF470)" },
+    // How InventoryItemBox finds its own item (sub_14034BDD0): this with the
+    // screen's location (InventoryScreen2+0x58), then the entry whose first
+    // qword is the box's item id (box+0x58). Equipped items first
+    // (sub_1403B3150 walks every run cat's slots at CatData+0x9B0), then the
+    // location's own items (Inventory getter sub_1402E1660). A getter: it
+    // allocates its result and touches nothing else.
+    { 0x003B32D0, "MewDirector items at a location (sub_1403B32D0)" },
+    { 0x00D4CB24, "the game's free (sub_140D4CB24)" },
 };
 
 // sub_140138A10 IS NOT A DRAW ROUTINE, and it is in the table above only

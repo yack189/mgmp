@@ -1514,6 +1514,22 @@ alone. The rule is now scene-based: `StorageItems` + `Map` live and `House`
 not → shared. Equipping raises a `YesNoPrompt` scene (a `GenericButton`), which
 is shared with it.
 
+**Item boxes are matched by the item, not by update order.** Measured
+2026-10-13: the host pressed `InventoryButton_face #0` and equipped with no
+prompt; the client's `#0` was a different face item — a parasite — and raised
+`POPUP_TRY_EQUIP_PARASITE` that nothing could answer (the client's clicks went
+to a host with no prompt). `InventoryItemBox::init`'s lambda (vt
+`0x140F117F0`, `_Do_call` `0x140352810`) captures the box at impl`+8`; the box
+holds its `InventoryScreen2` at `+0x38` and the item's per-process object id at
+`+0x58`; the screen's `Inventory::Loc` is at `+0x58`. The box finds its item
+the way `sub_14034BDD0` does: `sub_1403B32D0(MewDirector, out, loc, 0)` — every
+run cat's worn items, then that location's — and the entry whose first qword is
+the id; the name is the `std::string` at item`+8`. That name is the press's
+tag. A client's yes/no click the host never answers goes through locally on a
+second click after 2.5 s. The click body is `sub_14034EB20`; its prompts are
+`POPUP_TRY_EQUIP_MODIFIER`, `_PARASITE` and `_PARASITE_QUEST_ITEMS`, raised
+through `sub_14077DD30`.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,
