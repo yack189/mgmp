@@ -16,16 +16,22 @@ partida, el otro se une, y en combate cada uno mueve sus gatos.
 
 1. Descarga `mgmp-coop.zip` de la página de *Releases* del repositorio
    (la versión llamada **ultima-version**).
-2. Descomprímelo en una carpeta cualquiera, por ejemplo `Documentos\MewgenicsCoop`.
-3. Abre `mgmp.json` con el Bloc de notas y revisa la línea `"game"`: tiene que
-   apuntar a tu `Mewgenics.exe`. Si instalaste Steam en otro disco, cámbiala.
-   Las barras van dobles: `"D:\\SteamLibrary\\steamapps\\common\\Mewgenics\\Mewgenics.exe"`.
-   (También puedes arrastrar `Mewgenics.exe` encima de `mgmp_loader.exe`.)
-4. **Haz una copia de tus partidas guardadas** antes de la primera vez, por si acaso.
+2. Descomprímelo **dentro de la carpeta del juego**, la que tiene
+   `Mewgenics.exe` (en Steam: clic derecho en Mewgenics → *Administrar* →
+   *Ver archivos locales*). Queda una carpeta `MewgenicsCoop` ahí dentro.
+   El mod encuentra el juego solo; no hay que editar nada, en ninguna PC.
+   (Si lo pones en otro sitio, también busca el juego en tus bibliotecas de
+   Steam; y siempre puedes arrastrar `Mewgenics.exe` encima de `mgmp_loader.exe`.)
+3. **Haz una copia de tus partidas guardadas** antes de la primera vez, por si acaso.
+
+Para **actualizar**, descomprime el zip nuevo en el mismo sitio y acepta
+reemplazar los archivos. Tu nombre, la última IP y los registros de partidas
+se quedan como estaban.
 
 ## Jugar
 
-1. Abre **`mgmp_loader.exe`** (no el juego desde Steam). Abre el juego con el mod.
+1. Abre **`mgmp_loader.exe`** de la carpeta `MewgenicsCoop` (no el juego desde
+   Steam). Abre el juego con el mod. Puedes crearle un acceso directo en el escritorio.
 2. En el menú principal verás el botón **MULTIJUGADOR** arriba a la derecha.
 3. Escribe tu nombre.
 4. **El host** pulsa **CREAR PARTIDA**. Le aparece su IP; la que dice

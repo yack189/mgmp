@@ -124,6 +124,81 @@ bool game_from_config(const wchar_t* dir, wchar_t* out, size_t out_len) {
     return out[0] != 0;
 }
 
+// --- finding the game without being told -------------------------------------
+//
+// The mod folder is meant to be dropped INTO the game's own folder (or next to
+// Mewgenics.exe), so the same unzipped folder works on any PC without editing
+// mgmp.json. Order: the loader's own folder, its parent, then every Steam
+// library Steam itself knows about.
+
+static bool file_exists(const wchar_t* p) {
+    const DWORD a = GetFileAttributesW(p);
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static bool try_game_in(const wchar_t* folder, wchar_t* out, size_t out_len) {
+    wchar_t p[MAX_PATH];
+    swprintf_s(p, L"%s\\Mewgenics.exe", folder);
+    if (!file_exists(p)) return false;
+    wcsncpy_s(out, out_len, p, _TRUNCATE);
+    return true;
+}
+
+// Steam's libraries, from steamapps\libraryfolders.vdf under the install Steam
+// records in the registry. Only the "path" lines are read; the vdf escapes
+// backslashes, which are undone here.
+static bool game_from_steam(wchar_t* out, size_t out_len) {
+    wchar_t steam[MAX_PATH] = {};
+    DWORD sz = sizeof(steam);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath",
+                     RRF_RT_REG_SZ, nullptr, steam, &sz) != ERROR_SUCCESS) {
+        sz = sizeof(steam);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Valve\\Steam",
+                         L"InstallPath", RRF_RT_REG_SZ, nullptr, steam, &sz) != ERROR_SUCCESS)
+            return false;
+    }
+    for (wchar_t* c = steam; *c; ++c) if (*c == L'/') *c = L'\\';
+
+    wchar_t lib[MAX_PATH];
+    swprintf_s(lib, L"%s\\steamapps\\common\\Mewgenics", steam);
+    if (try_game_in(lib, out, out_len)) return true;
+
+    wchar_t vdf[MAX_PATH];
+    swprintf_s(vdf, L"%s\\steamapps\\libraryfolders.vdf", steam);
+    std::ifstream in(vdf);
+    if (!in) return false;
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t k = line.find("\"path\"");
+        if (k == std::string::npos) continue;
+        const size_t a = line.find('"', k + 6);
+        if (a == std::string::npos) continue;
+        const size_t b = line.find('"', a + 1);
+        if (b == std::string::npos) continue;
+        std::string raw = line.substr(a + 1, b - a - 1), path;
+        for (size_t i = 0; i < raw.size(); ++i) {
+            if (raw[i] == '\\' && i + 1 < raw.size() && raw[i + 1] == '\\') ++i;
+            path += raw[i];
+        }
+        wchar_t wpath[MAX_PATH] = {};
+        if (!MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath, MAX_PATH)) continue;
+        swprintf_s(lib, L"%s\\steamapps\\common\\Mewgenics", wpath);
+        if (try_game_in(lib, out, out_len)) return true;
+    }
+    return false;
+}
+
+static bool find_game(const wchar_t* dir, wchar_t* out, size_t out_len) {
+    if (try_game_in(dir, out, out_len)) return true;
+    wchar_t parent[MAX_PATH];
+    wcsncpy_s(parent, dir, _TRUNCATE);
+    if (wchar_t* sl = wcsrchr(parent, L'\\')) {
+        *sl = 0;
+        if (try_game_in(parent, out, out_len)) return true;
+    }
+    return game_from_steam(out, out_len);
+}
+
 // --- pre-main injection -----------------------------------------------------
 //
 // CreateRemoteThread(LoadLibraryW) cannot be used on a process straight out of
@@ -585,11 +660,15 @@ static int real_main(int argc, wchar_t** argv) {
     int     first_game_arg = 2;
     if (argc >= 2) {
         wcsncpy_s(game, argv[1], _TRUNCATE);
-    } else if (!game_from_config(dir, game, MAX_PATH)) {
+    } else if (game_from_config(dir, game, MAX_PATH) && file_exists(game)) {
+        // an explicit path in mgmp.json that is right on this PC
+    } else if (find_game(dir, game, MAX_PATH)) {
+        wprintf(L"[*] juego encontrado: %s\n", game);
+    } else {
         fwprintf(stderr,
-                 L"usage: mgmp_loader.exe <path\\to\\Mewgenics.exe> [args...]\n"
-                 L"       mgmp_loader.exe --attach <pid>\n"
-                 L"   or set  \"game\": \"<path>\"  in mgmp.json next to the loader.\n");
+                 L"[!] no encontre Mewgenics.exe.\n"
+                 L"    Pon esta carpeta dentro de la carpeta del juego (donde esta\n"
+                 L"    Mewgenics.exe), o arrastra Mewgenics.exe encima de mgmp_loader.exe.\n");
         return 1;
     }
     if (GetFileAttributesW(game) == INVALID_FILE_ATTRIBUTES) {

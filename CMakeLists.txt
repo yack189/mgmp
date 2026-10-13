@@ -120,7 +120,7 @@ target_compile_options(mgmp_loader PRIVATE /W3)
 # third_party for json.hpp: the loader parses mgmp.json for the game path,
 # which is the one setting it needs and the DLL cannot supply.
 target_include_directories(mgmp_loader PRIVATE src/core third_party)
-target_link_libraries(mgmp_loader PRIVATE kernel32 user32)
+target_link_libraries(mgmp_loader PRIVATE kernel32 user32 advapi32)
 
 # Ship a default config next to mgmp_loader.exe, but never clobber one the user
 # has since edited (game, net.role, net.control) -- same rule build.ps1 followed.

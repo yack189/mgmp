@@ -37,13 +37,15 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $out = "mgmp-coop"
+          # One folder inside the zip, meant to be unzipped into the game's own
+          # folder (next to Mewgenics.exe): the loader finds the game from there.
+          $out = "MewgenicsCoop"
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item build\Release\mgmp_loader.exe $out\
           Copy-Item build\Release\mgmp.dll        $out\
           Copy-Item mgmp.json.template            $out\mgmp.json
           Copy-Item COMO-JUGAR.md                 $out\
-          Compress-Archive -Path "$out\*" -DestinationPath mgmp-coop.zip -Force
+          Compress-Archive -Path "$out" -DestinationPath mgmp-coop.zip -Force
 
       - name: Publish release
         shell: pwsh
