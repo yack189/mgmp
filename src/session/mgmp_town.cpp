@@ -124,6 +124,7 @@ struct State {
     // a 3-second grace was not enough to carry the sharing across.
     ULONGLONG depart_at = 0;
     bool      depart_saw_items = false;
+    bool      run_items = false;       // the run's starting equip screen is up
     bool      injecting = false;
 
     Pending   pq[kQueue];
@@ -301,10 +302,14 @@ bool is_backpack(void* button, const Key& k) {
            !leave_scene_live("LevelUp");
 }
 
+// The inventory screens, and the yes/no prompt equipping an item raises over
+// them (measured 2026-10-13: InventoryButton_face, then a GenericButton in a
+// YesNoPrompt scene) -- the prompt's answer is part of the same press.
 bool in_inventory_scene(void* button) {
     char nm[24];
     return scene_name(button, nm, sizeof(nm)) &&
-           (strcmp(nm, "CatStatus") == 0 || strcmp(nm, "StorageItems") == 0);
+           (strcmp(nm, "CatStatus") == 0 || strcmp(nm, "StorageItems") == 0 ||
+            strcmp(nm, "YesNoPrompt") == 0);
 }
 
 // An adventure's shop node, standing on the map with the house gone. A chest
@@ -757,6 +762,23 @@ void town_pump() {
     if (g.awaiting_run && ((!leave_scene_live("House") && !leave_scene_live("ClassChooser")) ||
                            now - g.awaiting_run > 120000))
         g.awaiting_run = 0;
+    // A run's first screen. The cats' items (StorageItems, an InventoryScreen2)
+    // come up over the Map once the run is loaded -- on the host as it
+    // starts, and on the client the moment it loads the host's save, so both
+    // have it open together. Measured 2026-10-13: scenes "Map, StorageItems"
+    // on both peers straight after the save loaded, with no chooser in the
+    // session at all -- nothing had marked it shared, and each equipped alone.
+    if (leave_scene_live("StorageItems") && leave_scene_live("Map") &&
+        !leave_scene_live("House")) {
+        if (!g.inv_shared || !g.run_items)
+            log_line("TOWN", "the cats' items screen at the start of the run is shared --"
+                             " either player equips, every press through the host");
+        g.run_items = true;
+        g.inv_shared = true;
+        g.inv_since = now;
+    } else {
+        g.run_items = false;
+    }
     // Departing: the equip screen is shared for as long as it is up, however
     // long the way to it took.
     if (g.depart_at) {

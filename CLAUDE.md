@@ -1506,6 +1506,14 @@ scoped to the departure: from the start press until `StorageItems` has been up
 and gone. `sub_1403CC9A0` also builds a `StorageItems` scene (with
 `sub_1403C5060`); that one is not shared.
 
+**Correction, measured the same day: the equip screen comes up over the MAP,
+once the run is loaded.** A save made there reloads straight into scenes
+`Map, StorageItems` on both peers, with no `House` and no chooser in the
+session — so a flag set by the chooser never applied, and each player equipped
+alone. The rule is now scene-based: `StorageItems` + `Map` live and `House`
+not → shared. Equipping raises a `YesNoPrompt` scene (a `GenericButton`), which
+is shared with it.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,
