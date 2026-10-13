@@ -459,6 +459,8 @@ bool follow_on_map() {
     return (GetTickCount64() - g.map_tick) < 250;
 }
 
+void* follow_map_screen() { return g.map; }
+
 uint32_t follow_node_count() {
     if (!g.map) return 0;
     uint32_t count = 0; void* data = nullptr;

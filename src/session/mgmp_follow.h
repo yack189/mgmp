@@ -90,6 +90,10 @@ void follow_catchup(uint8_t peer);
 // reason to refuse a flush.
 bool follow_on_map();
 
+// The MapScreen the map tick last ran on (null before any). Compared, never
+// dereferenced, by callers: a new one means the map was rebuilt.
+void* follow_map_screen();
+
 // --- enumerating the map, for the debug panel --------------------------------
 
 // Number of nodes on the live map, or 0 if there is no map screen yet.

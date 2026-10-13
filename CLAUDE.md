@@ -1540,6 +1540,22 @@ holds a repeat of the same click for 1.5 s unless a host press landed meanwhile;
 the host ignores a request identical to one already queued, and drops a request
 it cannot make after 3 s.
 
+**The act screen, and the run that starts after it.** Measured 2026-10-13: the
+items screen's `CloseButton` opens `ActSelection` (over `Map`) on both peers;
+its start is `ActSelectionScreen::init` lambda_1 (vt `0x140ED49A8`, `_Do_call`
+`0x14006A4C0`), which begins a fade (`sub_1403C0210` on `0x1413DAC30`) whose end
+calls `sub_1403B0D20`. On a client that start is refused, so pressing lambda_1
+there left a **white screen** with nothing behind it — and the host only ever
+sent its run when it departed from the HOUSE, so a session that came in through
+a save already on the items screen was never sent the run at all. Now a client
+never presses lambda_1 (it waits on the act screen), the host records the map
+(`MapScreen*`, node count, node 0's seed) at any `sub_1403B0D20` and sends its
+save fresh once a different map has ticked for a second with the start's
+scenes gone (15 s if the map looks unchanged), and the client goes out to the
+title screen the way the end of the day does. lambda_5 (vt `0x140ED4900`) is
+the act tile, an ICF'd do-nothing `_Do_call`; lambda_6 (`0x140ED48C8`) is
+`Button_LowerDifficulty`. **Not yet run.**
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

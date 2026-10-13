@@ -9,6 +9,7 @@
 #include "mgmp_leave.h"
 #include "mgmp_rng.h"
 #include "mgmp_follow.h"
+#include "mgmp_savefile.h"
 
 #include <windows.h>
 #include <cstring>
@@ -80,7 +81,7 @@ enum class Kind : uint8_t { None, Way, Office, InvOpen, Inv, Choose, Start, RunS
 
 // What a callback's class is, read from its own RTTI once per vtable.
 enum class Cls : uint8_t { Unknown, Other, Drawer, NpcMap, Chooser, ChooserStart, Shop,
-                           ItemBox };
+                           ItemBox, ActStart };
 
 // An inventory screen's item box (InventoryItemBox::init's lambda_1: its
 // capture at impl+8 is the box). The box: +0x38 its InventoryScreen2, +0x58
@@ -193,9 +194,16 @@ struct State {
     // client: a line that has stood open with nothing from the host
     ULONGLONG line_since = 0;
 
-    // client: the host started the adventure from the class chooser; this
-    // peer waits for the host's run instead of starting its own
+    // client: the host started the adventure; this peer waits for the host's
+    // run instead of starting its own
     ULONGLONG awaiting_run = 0;
+    // host: this machine started an adventure; its run is sent fresh once the
+    // new map is up. The map as it was at the start, to tell the new one by.
+    ULONGLONG host_run_at = 0;
+    void*     host_run_map = nullptr;
+    uint32_t  host_run_nodes = 0;
+    uint64_t  host_run_seed = 0;
+    ULONGLONG host_run_on_map = 0;
     // client: a press in the host's shop was refused (for the notice)
     ULONGLONG shop_refused_at = 0;
     uint32_t  shop_refused = 0;
@@ -241,6 +249,12 @@ Cls class_of(uintptr_t vt) {
             // and the colorless-cat confirm nested inside it (0x140EE22C0)
             // both carry "init@ClassChooser" in their type names.
             else if (strstr(nm, "init@ClassChooser")) c = Cls::ChooserStart;
+            // ActSelectionScreen::init's lambda_1 (vt 0x140ED49A8, _Do_call
+            // 0x14006A4C0): the act screen's start. It begins a fade whose end
+            // starts the adventure (sub_1403B0D20) -- which a client refuses,
+            // so a client that runs it is left on a white screen with nothing
+            // behind it. Measured 2026-10-13.
+            else if (strstr(nm, "lambda_1>@?1??init@ActSelectionScreen")) c = Cls::ActStart;
             else if (strstr(nm, "ClassChooser") || strstr(nm, "ClassTagBox") ||
                      strstr(nm, "ActSelectionScreen")) c = Cls::Chooser;
             // Shop::refresh_shopitem (Shop_BuyButton), Shop::initShop
@@ -432,6 +446,7 @@ Kind kind_of(void* button, const Key& k, Cls cls) {
     if (cls == Cls::NpcMap) return Kind::Way;
     if (strcmp(k.name, "Depart_Sign") == 0) return Kind::Way;
     if (cls == Cls::ChooserStart) return Kind::Start;
+    if (cls == Cls::ActStart) return Kind::Choose;
     if (cls == Cls::Chooser || in_chooser_scene(button)) return Kind::Choose;
     if (in_run_shop(button)) return Kind::RunShop;
     if (g.office && in_office_scene(button)) return Kind::Office;
@@ -602,13 +617,36 @@ bool town_presses_pending() { return g.pq_n != 0; }
 // host's, loaded from the host's save once it is on the map -- the same reload
 // the end of the day uses. So the press that would start this machine's own
 // run does everything up to that, and stops there.
-bool town_run_start_allowed() {
-    if (!is_client()) return true;
+static void map_print(void*& map, uint32_t& nodes, uint64_t& seed) {
+    map = follow_map_screen();
+    nodes = follow_node_count();
+    seed = 0;
+    uint32_t type = 0;
+    if (nodes) follow_node_info(0, type, seed, nullptr);
+}
+
+static void await_host_run(const char* how) {
     g.awaiting_run = GetTickCount64();
     g.inv_shared = false;
     g.depart_at = 0;
-    log_line("TOWN", "the host is starting the adventure -- this player's own run is not"
-                     " started; the host's loads here as soon as it is on the map");
+    log_line("TOWN", "the host is starting the adventure (%s) -- this player's own run is"
+                     " not started; the host's loads here as soon as it is on the map", how);
+}
+
+bool town_run_start_allowed() {
+    if (is_host()) {
+        // Whatever led here -- the act screen, the items screen's straight start
+        // at the alley, a scripted run -- the client cannot start this run
+        // itself, so it is sent once the new map is up.
+        g.host_run_at = GetTickCount64();
+        g.host_run_on_map = 0;
+        map_print(g.host_run_map, g.host_run_nodes, g.host_run_seed);
+        log_line("TOWN", "starting the adventure -- the run goes to the other player once"
+                         " its map is up");
+        return true;
+    }
+    if (!is_client()) return true;
+    await_host_run("its start came here");
     return false;
 }
 bool town_shop_refused_recently() {
@@ -765,6 +803,14 @@ void town_on_button_post(void* button) {
     }
     if (strcmp(k.name, "Map_Backpack") == 0 || cls == Cls::ChooserStart) inv_opened();
     if (cls == Cls::ChooserStart) depart_started();
+    if (cls == Cls::ActStart && !m.request) {
+        // Not pressed here: its fade ends in a run start this peer refuses,
+        // and a refused start leaves the screen white. The act screen stays up
+        // until the host's run arrives.
+        ++g.done;
+        await_host_run("the act screen");
+        return;
+    }
     if (run_callback(button)) ++g.done;
 }
 
@@ -878,6 +924,39 @@ void town_on_dialog(uint8_t, const DialogMsg& m) {
 
 // --- once a frame ---------------------------------------------------------------
 
+// HOST: the run this machine started, sent once its map is up. The new map is
+// told from the one the start was pressed over by its MapScreen or its nodes
+// (whichever the game rebuilt), and is given a moment once it ticks -- the
+// start's own scene is still running when the map first does.
+static void host_run_pump(ULONGLONG now) {
+    if (!g.host_run_at || !is_host()) return;
+    if (now - g.host_run_at > 180000) {
+        g.host_run_at = 0;
+        log_line("TOWN", "!! the adventure was started 3 min ago and its map never came up"
+                         " here -- the other player was not sent it");
+        return;
+    }
+    const bool busy = leave_scene_live("ActSelection") || leave_scene_live("Cutscene") ||
+                      leave_scene_live("ClassChooser") || leave_scene_live("StorageItems");
+    if (busy || !follow_on_map() || !savefile_adventure_is_loaded()) {
+        g.host_run_on_map = 0;
+        return;
+    }
+    void* map; uint32_t nodes; uint64_t seed;
+    map_print(map, nodes, seed);
+    const bool changed = map != g.host_run_map || nodes != g.host_run_nodes ||
+                         seed != g.host_run_seed;
+    if (!g.host_run_on_map) g.host_run_on_map = now;
+    const ULONGLONG on = now - g.host_run_on_map;
+    if (!(changed ? on > 1000 : on > 15000)) return;
+    g.host_run_at = 0;
+    if (!net_active()) return;
+    if (!changed)
+        log_line("TOWN", "the map still looks like the one the start was pressed over --"
+                         " sending the run anyway");
+    savefile_publish_fresh("the host started the adventure");
+}
+
 void town_pump() {
     ++g.frame;
     if (!net_active()) { g.pq_n = 0; g.dq_n = 0; g.office = false; return; }
@@ -891,11 +970,17 @@ void town_pump() {
         }
     }
     const ULONGLONG now = GetTickCount64();
-    // Out of the house and the chooser: the host's run is loading, or never
-    // came (2 minutes), and either way there is nothing left to wait for here.
-    if (g.awaiting_run && ((!leave_scene_live("House") && !leave_scene_live("ClassChooser")) ||
-                           now - g.awaiting_run > 120000))
+    // The host's run is loading (the title or save screen is up), or never came.
+    // Not "out of the house": the act screen and the run's map are not the
+    // house either, and the wait has to outlast them.
+    if (g.awaiting_run && (leave_scene_live("MainMenu") ||
+                           leave_scene_live("SaveSelectionScreen") ||
+                           now - g.awaiting_run > 180000)) {
+        if (now - g.awaiting_run > 180000)
+            log_line("TOWN", "!! the host's run never arrived (3 min) -- no longer waiting");
         g.awaiting_run = 0;
+    }
+    host_run_pump(now);
     // A run's first screen. The cats' items (StorageItems, an InventoryScreen2)
     // come up over the Map once the run is loaded -- on the host as it
     // starts, and on the client the moment it loads the host's save, so both

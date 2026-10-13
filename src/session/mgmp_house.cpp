@@ -12,6 +12,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_rng.h"
 #include "mgmp_furn.h"
+#include "mgmp_town.h"
 
 #include <windows.h>
 #include <cmath>
@@ -914,8 +915,9 @@ void house_request_reload() {
     // the auto-Play and the save screen then load the host's new day, exactly
     // as they load a run.
     leave_request_local();
-    log_line("HOUSE", "the host ended the day -- going out to the title screen to load"
-                      " the new day");
+    log_line("HOUSE", town_awaiting_run()
+                 ? "the host's adventure is ready -- going out to the title screen to load it"
+                 : "the host ended the day -- going out to the title screen to load the new day");
 }
 
 bool house_reload_pending() { return g.reload_at != 0; }
@@ -1109,8 +1111,12 @@ void house_pump() {
 
     // --- client: get out to the title screen --------------------------------
     if (!g.reload_at) return;
-    if (!leave_scene_live("House")) {          // out of the house: the rest is
-        g.reload_at = 0;                        // the save screen's job
+    // Out of the house -- or off the act screen / the run's map a client waits
+    // on for the host's adventure -- the rest is the save screen's job.
+    const bool waiting_run = town_awaiting_run() && leave_scene_live("Map");
+    if (leave_scene_live("MainMenu") || leave_scene_live("SaveSelectionScreen") ||
+        (!leave_scene_live("House") && !waiting_run)) {
+        g.reload_at = 0;
         return;
     }
     // Open the pause menu with Escape. There is no callable way in -- the menu
