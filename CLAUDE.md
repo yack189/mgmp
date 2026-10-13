@@ -1530,6 +1530,16 @@ second click after 2.5 s. The click body is `sub_14034EB20`; its prompts are
 `POPUP_TRY_EQUIP_MODIFIER`, `_PARASITE` and `_PARASITE_QUEST_ITEMS`, raised
 through `sub_14077DD30`.
 
+**Requests must be debounced.** Measured the same day: a client that clicks
+again while its first request is still in flight sends it again; the host's
+queue filled (32 waiting, the rest dropped — including a later unequip) and
+each surplus copy toggled the item once more, which played as "sometimes it
+will not unequip". A request at the queue's head naming a button the host no
+longer has also blocked everything behind it for the 20 s drop. Now: the client
+holds a repeat of the same click for 1.5 s unless a host press landed meanwhile;
+the host ignores a request identical to one already queued, and drops a request
+it cannot make after 3 s.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

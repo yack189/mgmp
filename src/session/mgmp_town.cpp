@@ -52,6 +52,14 @@ constexpr uintptr_t kScene_Name    = 1208;    // std::string (CLAUDE.md, scene l
 constexpr uint32_t  kQueue        = 32;
 constexpr uint64_t  kPressGapMs   = 350;
 constexpr uint64_t  kPressDropMs  = 20000;
+// A request the host cannot make (the button it names is not on the host's
+// screen any more) blocks every press behind it; give it this long.
+constexpr uint64_t  kRequestDropMs = 3000;
+// A client's click repeated while its first is still on its way: not sent
+// again. Measured 2026-10-13: impatient re-clicks on the shared inventory
+// filled the host's queue (32 waiting, the rest dropped) and every extra copy
+// toggled the item again -- which is "sometimes it will not unequip".
+constexpr uint64_t  kAskHoldMs     = 1500;
 constexpr uint64_t  kDlgDropMs    = 30000;
 constexpr uint32_t  kOrdSlots     = 128;
 // A dialog line open this long here, with nothing from the host to close it,
@@ -133,6 +141,8 @@ struct State {
     uint64_t  ask_hash = 0;
     ULONGLONG ask_at = 0;
     uint32_t  ask_done_mark = 0;
+    ULONGLONG ask_sent = 0;
+    uint32_t  ask_held = 0, req_dupes = 0, req_stale = 0;
 
     ClsCache  cls[64];
     uint32_t  ncls = 0;
@@ -660,26 +670,33 @@ bool town_on_button_click(void* button) {
             log_line("TOWN", "classes chosen -- both players go on to the cats' items");
         return true;
     }
+    // The same click again while the first is still on its way -- nothing from
+    // the host has been pressed here since it was asked -- is that click, not
+    // a new one.
+    const uint64_t h = kind_hash(k) ^ k.ordinal;
+    const ULONGLONG now = GetTickCount64();
+    if (h != g.ask_hash || g.ask_done_mark != g.done) {
+        g.ask_hash = h;
+        g.ask_at = now;
+        g.ask_done_mark = g.done;
+        g.ask_sent = 0;
+    }
     // A yes/no prompt the host is not showing: nothing would ever answer this
-    // player's click. A second click on the same button, after the host has
-    // had time to answer the first and has not, goes through here.
+    // player's click. A click on the same button, after the host has had time
+    // to answer the first and has not, goes through here.
     char snm[24];
     const bool prompt = scene_name(button, snm, sizeof(snm)) && strcmp(snm, "YesNoPrompt") == 0;
-    if (prompt) {
-        const uint64_t h = kind_hash(k) ^ k.ordinal;
-        const ULONGLONG now = GetTickCount64();
-        if (h == g.ask_hash && g.ask_done_mark == g.done && now - g.ask_at > kPromptValveMs) {
-            g.ask_hash = 0;
-            log_line("TOWN", "!! the host never answered the prompt here (it is not showing"
-                             " it) -- '%s' is pressed on this machine only", k.name);
-            return true;
-        }
-        if (h != g.ask_hash || g.ask_done_mark != g.done) {
-            g.ask_hash = h;
-            g.ask_at = now;
-            g.ask_done_mark = g.done;
-        }
+    if (prompt && g.ask_sent && now - g.ask_at > kPromptValveMs) {
+        g.ask_hash = 0;
+        log_line("TOWN", "!! the host never answered the prompt here (it is not showing"
+                         " it) -- '%s' is pressed on this machine only", k.name);
+        return true;
     }
+    if (g.ask_sent && now - g.ask_sent < kAskHoldMs) {
+        ++g.ask_held;
+        return false;
+    }
+    g.ask_sent = now;
     // A client asks; the host presses; the press comes back here.
     send_press(k, 1, false, want);
     log_line("TOWN", "asked the host to press '%s'%s%s -- %s", k.name[0] ? k.name : "?",
@@ -692,6 +709,18 @@ void town_on_press(uint8_t from, const TownPressMsg& m) {
     if (!net_active()) return;
     // A request goes to the host; a press comes from it. Nothing else.
     if (m.request ? !is_host() : !is_client()) return;
+    // The same request twice in the queue would press the same button twice --
+    // equip, then take straight back off.
+    if (m.request) {
+        for (uint32_t i = 0; i < g.pq_n; ++i) {
+            const TownPressMsg& q = g.pq[i].m;
+            if (q.request && q.vt_rva == m.vt_rva && q.ordinal == m.ordinal &&
+                strcmp(q.name, m.name) == 0 && strcmp(q.tag, m.tag) == 0) {
+                ++g.req_dupes;
+                return;
+            }
+        }
+    }
     if (g.pq_n >= kQueue) {
         ++g.dropped;
         log_line("TOWN", "!! %u presses already waiting -- dropping '%s' from peer %u",
@@ -907,6 +936,13 @@ void town_pump() {
         g.inv_shared = false;
         log_line_lvl(LogLevel::Trace, "TOWN", "the shared backpack is closed");
     }
+    if (g.pq_n && g.pq[0].m.request && now - g.pq[0].at > kRequestDropMs) {
+        ++g.req_stale;
+        log_line("TOWN", "the other player's '%s' %s is not on this screen any more (already"
+                         " done, or the screen moved on) -- not pressed", g.pq[0].m.name,
+                 g.pq[0].m.tag);
+        pq_pop();
+    }
     if (g.pq_n && now - g.pq[0].at > kPressDropMs) {
         ++g.dropped;
         log_line("TOWN", "!! '%s' %s never appeared on this peer in %llu s -- dropped",
@@ -925,9 +961,10 @@ void town_shutdown() {
     if (g.sent || g.asked || g.done || g.dlg_sent || g.dlg_done)
         log_line_lvl(g.dropped || g.dlg_dropped ? LogLevel::Warn : LogLevel::Trace, "TOWN",
                      "done: %u press(es) sent, %u asked of the host, %u done here, %u"
-                     " dropped; dialogs %u sent, %u applied, %u dropped",
-                     g.sent, g.asked, g.done, g.dropped, g.dlg_sent, g.dlg_done,
-                     g.dlg_dropped);
+                     " dropped; %u repeat click(s) held, %u duplicate request(s) and %u"
+                     " stale one(s) not pressed; dialogs %u sent, %u applied, %u dropped",
+                     g.sent, g.asked, g.done, g.dropped, g.ask_held, g.req_dupes,
+                     g.req_stale, g.dlg_sent, g.dlg_done, g.dlg_dropped);
     g.pq_n = 0; g.dq_n = 0; g.blk_depth = 0;
 }
 
