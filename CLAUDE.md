@@ -1564,6 +1564,14 @@ set was not traced (`+0x3E0` byte writes are too many to read blind). Cosmetic:
 the difficulty that counts is the host's, because the client loads the host's
 run.
 
+**A battle can have more player-controlled units than the run has cats.**
+Measured 2026-10-13: four run cats, five `PlayerBrain`s — the fifth spawned
+after the enemies (roster index 33). The party split required every human to
+link to a run cat through `Character+0x88` (the `CatData*`, found by scan and
+stable on this build), so it found no link and fell back to the roster-order
+split, ignoring who owns which cat. Now every run cat must link to a distinct
+human and a human that links to none goes to the host.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

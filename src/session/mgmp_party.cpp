@@ -351,18 +351,28 @@ bool party_split(const void* const* chars, uint32_t humans, bool* local_out) {
         readable = chars[k] && mem_read(chars[k], page[k], kCharScan);
 
     if (readable) {
+        // Every run cat must be found, each in a different human; a human
+        // that points at none is not a run cat (measured 2026-10-13: a fifth
+        // PlayerBrain unit, spawned after the enemies, in a battle with four
+        // run cats -- requiring all five to link threw the whole party table
+        // away and split the battle by roster order).
         auto try_off = [&](uint32_t off) -> bool {
             bool used[kMaxRun] = {};
+            uint32_t found = 0;
             for (uint32_t k = 0; k < humans; ++k) {
                 const void* p = *(const void* const*)(page[k] + off);
-                int hit = -1;
-                for (uint32_t j = 0; j < r.count; ++j)
-                    if (r.cats[j] == p && !used[j]) { hit = (int)j; break; }
-                if (hit < 0) return false;
-                used[hit] = true;
-                which[k] = hit;
+                which[k] = -1;
+                if (!p) continue;
+                for (uint32_t j = 0; j < r.count; ++j) {
+                    if (r.cats[j] != p) continue;
+                    if (used[j]) return false;          // two humans, one cat
+                    used[j] = true;
+                    which[k] = (int)j;
+                    ++found;
+                    break;
+                }
             }
-            return true;
+            return found == r.count && found > 0;
         };
         if (g.link_off && try_off(g.link_off)) linked = true;
         for (uint32_t off = 0; !linked && off + 8 <= kCharScan; off += 8)
@@ -386,6 +396,14 @@ bool party_split(const void* const* chars, uint32_t humans, bool* local_out) {
     Guard guard;
     const uint8_t self = net_self();
     for (uint32_t k = 0; k < humans; ++k) {
+        if (which[k] < 0) {
+            // Player-controlled but not one of the run's cats: the host's.
+            local_out[k] = (self == kHostPeer);
+            log_line("PARTY", "battle cat %u is player-controlled but not one of the run's"
+                              " cats -> the host plays it%s", k,
+                     local_out[k] ? " (this peer)" : "");
+            continue;
+        }
         const uint64_t id = r.ids[which[k]];
         const int i = find(id);
         if (i < 0) {
