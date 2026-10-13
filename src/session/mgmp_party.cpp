@@ -397,10 +397,32 @@ bool party_split(const void* const* chars, uint32_t humans, bool* local_out) {
     const uint8_t self = net_self();
     for (uint32_t k = 0; k < humans; ++k) {
         if (which[k] < 0) {
-            // Player-controlled but not one of the run's cats: the host's.
-            local_out[k] = (self == kHostPeer);
+            // Player-controlled but not one of the run's cats. If a run cat
+            // spawned it (Character+0x468, validated by +0x470 against the
+            // spawner's own tag -- see spawner_of in mgmp_lockstep.cpp), it is
+            // that cat's owner's; otherwise the host's.
+            int from = -1;
+            const void* p = chars[k];
+            for (int hop = 0; hop < 4 && from < 0; ++hop) {
+                const void* sp = nullptr;
+                uint64_t tag = 0, sptag = 0;
+                if (!p || !mem_read((const uint8_t*)p + 0x468, &sp, sizeof(sp)) || !sp ||
+                    !mem_read((const uint8_t*)p + 0x470, &tag, sizeof(tag)) ||
+                    !mem_read((const uint8_t*)sp - 8, &sptag, sizeof(sptag)) || tag != sptag)
+                    break;
+                for (uint32_t j = 0; j < humans; ++j)
+                    if (chars[j] == sp && which[j] >= 0) { from = which[j]; break; }
+                p = sp;
+            }
+            uint8_t who = kHostPeer;
+            if (from >= 0) {
+                const int i = find(r.ids[from]);
+                if (i >= 0 && member(g.owner[i])) who = g.owner[i];
+            }
+            local_out[k] = (who == self);
             log_line("PARTY", "battle cat %u is player-controlled but not one of the run's"
-                              " cats -> the host plays it%s", k,
+                              " cats -> peer %u plays it (%s)%s", k, (unsigned)who,
+                     from >= 0 ? "its summoner's owner" : "nobody's summon: the host",
                      local_out[k] ? " (this peer)" : "");
             continue;
         }

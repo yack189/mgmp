@@ -178,6 +178,7 @@ struct State {
     uint32_t    cat_count      = 0;
     bool        local_cat[kMaxCats] = {};   // this peer's input decides for it
     bool        human_cat[kMaxCats] = {};   // a human brain drives it at all
+    bool        said_summon = false;        // logged the first player summon
     bool        snapped        = false;
     const void* snapped_list   = nullptr;   // the vector object we snapshotted
 
@@ -781,6 +782,92 @@ uint8_t cat_index_of(const void* character) {
     return kNoCat;
 }
 
+// --- player-controlled summons -----------------------------------------------
+//
+// A summon is not in the snapshot, so it has no roster index. Most are AI and
+// both peers let their own brain drive them. But some are PLAYER-controlled --
+// a druid's crows: a PlayerBrain on a Character with no CatData, which the game
+// itself calls a "ControlledFamiliar" (Character::BeginTurn's
+// "StartTurn_ControlledFamiliar" branch). Left to both peers' own brains, both
+// players could click it, each on their own machine -- the double-control
+// desync CLAUDE.md predicted.
+//
+// So one player drives it: whoever owns the roster cat it descends from.
+// sub_14011C0A0(spawner, spawned, ...) writes Character+0x468 = the spawner and
+// +0x470 = the spawner's own tag (its -8 qword); DieWhenSpawnerDies (slot 101)
+// and SpawnerCatDataReference both read it back with exactly that validity
+// test, so a stale pointer is refused, not followed.
+//
+// On the wire a summon is (root cat, ordinal): its 1-based position among the
+// live list's human-brained summons with the same root, in live-list order --
+// which is spawn order, the same on both peers at the same point in the fight.
+constexpr uintptr_t kChar_Spawner    = 0x468;
+constexpr uintptr_t kChar_SpawnerTag = 0x470;
+constexpr int       kSpawnerHops     = 4;
+
+static const void* spawner_of(const void* ch) {
+    const void* sp = nullptr;
+    uint64_t tag = 0, sptag = 0;
+    if (!ch || !mem_read((const uint8_t*)ch + kChar_Spawner, &sp, sizeof(sp)) || !sp)
+        return nullptr;
+    if (!mem_read((const uint8_t*)ch + kChar_SpawnerTag, &tag, sizeof(tag)) ||
+        !mem_read((const uint8_t*)sp - 8, &sptag, sizeof(sptag)) || tag != sptag)
+        return nullptr;
+    return sp;
+}
+
+static bool human_brained(const void* ch) {
+    const void* brain = nullptr;
+    if (!ch || !mem_read((const uint8_t*)ch + kChar_Brain, &brain, sizeof(brain)) || !brain)
+        return false;
+    char cls[96];
+    strcpy_s(cls, "?");
+    rtti_class_name(brain, cls, sizeof(cls));
+    return strstr(cls, tune::kReplayBrains) != nullptr;
+}
+
+uint8_t cat_index_of(const void* character);
+
+static uint8_t summon_root(const void* ch) {
+    const void* p = ch;
+    for (int hop = 0; hop < kSpawnerHops; ++hop) {
+        p = spawner_of(p);
+        if (!p) return kNoCat;
+        const uint8_t i = cat_index_of(p);
+        if (i != kNoCat) return i;
+    }
+    return kNoCat;
+}
+
+// 0 if `ch` is not (yet) in the live list.
+static uint8_t summon_ordinal(const void* ch, uint8_t root) {
+    uint32_t live = 0;
+    const void* data = nullptr;
+    const void* list = g.snapped_list;
+    if (!list ||
+        !mem_read((const uint8_t*)list + kList_Count, &live, sizeof(live)) ||
+        !mem_read((const uint8_t*)list + kList_Data,  &data, sizeof(data)) || !data)
+        return 0;
+    uint8_t k = 0;
+    for (uint32_t i = 0; i < live && i < kMaxCats; ++i) {
+        const void* e = nullptr;
+        if (!mem_read((const uint8_t*)data + i * sizeof(void*), &e, sizeof(e)) || !e)
+            continue;
+        if (cat_index_of(e) != kNoCat || !human_brained(e)) continue;
+        if (summon_root(e) != root) continue;
+        if (k == 0xFE) return 0;
+        ++k;
+        if (e == ch) return k;
+    }
+    return 0;
+}
+
+// Whose input decides for a summon descended from `root`.
+static bool summon_is_local(uint8_t root) {
+    if (root != kNoCat && g.human_cat[root]) return g.local_cat[root];
+    return net_role() == NetRole::Host;     // no player's cat behind it: the host's
+}
+
 // Snapshot the battle's character list. Called once per battle, at the first
 // turn boundary -- by then Level::init has run and every starting cat exists.
 // Resolve TurnControl -> the battle's character list. Split out from the
@@ -845,6 +932,7 @@ void snapshot_cats(void* turn_control) {
     g.hashed_count = 0;
     g.dump_sent    = false;
     g.dump_seen    = false;
+    g.said_summon  = false;
 
     // --- who is human -------------------------------------------------
     //
@@ -1417,10 +1505,11 @@ uint32_t pend_purge_retired() {
 
 // Pops the oldest pending action for `cat`, if any. Actions for different cats
 // can legitimately be in flight at once, so this is not a plain FIFO pop.
-bool pend_take(uint8_t cat, ActionMsg& out) {
+bool pend_take(uint8_t cat, ActionMsg& out, uint8_t summon = 0) {
     for (uint32_t i = 0; i < g.pend_count; ++i) {
         uint32_t slot = (g.pend_head + i) % kMaxPending;
         if (g.pending[slot].actor != cat) continue;
+        if (g.pending[slot].summon != summon) continue;
         // The battle id is part of the key, not a filter applied afterwards. An
         // action held for the NEXT battle names a cat index that exists in this
         // one too, so matching on the cat alone would inject a decision from
@@ -2395,6 +2484,74 @@ void lockstep_pump() {
 // Defined just below, after its first caller.
 static void apply_remote(const ActionMsg& msg, const void* actor, void* out);
 
+// The control split for one player-controlled summon. Same shape as a human
+// roster cat's below -- barrier, publish our own, inject the peer's -- keyed on
+// (root, summon) instead of the roster index.
+static bool fill_summon(uint8_t root, uint8_t summon, bool local, const void* actor,
+                        void* out) {
+    {
+        Guard guard;
+        if (const char* why = barrier_blocking()) {
+            barrier_wait_tick(why);
+            uint32_t none = TA_None;
+            mem_write(out, &none, sizeof(none));
+            return true;
+        }
+    }
+    Guard guard;
+    if (local) {
+        ActionMsg replayed{};
+        if (pend_take(root, replayed, summon)) {
+            apply_remote(replayed, actor, out);
+            return true;
+        }
+        if (g.outstanding) return false;
+        TurnAction a{};
+        if (!mem_read(out, &a, sizeof(a))) return false;
+        if (a.type != TA_Ability && a.type != TA_EndTurn) return false;
+
+        ActionMsg msg{};
+        msg.battle_id = g.battles.current;
+        msg.turn   = g.turn;
+        msg.actor  = root;
+        msg.summon = summon;
+        msg.type   = (uint8_t)a.type;
+        msg.tx = a.target_x; msg.ty = a.target_y;
+        msg.dx = a.dir_x;    msg.dy = a.dir_y;
+        msg.b30 = a.tail[0x30 - 0x28];
+        msg.b31 = a.tail[0x31 - 0x28];
+        if (a.type == TA_Ability) {
+            AbilitySlot slot = ability_slot_of(actor, a.ability);
+            msg.slot_kind  = slot.kind;
+            msg.slot_index = slot.index;
+            ability_gon_name(a.ability, msg.gon, sizeof(msg.gon));
+            if (slot.kind == SLOT_UNKNOWN)
+                log_line("LOCKSTEP", "!! summon %u of cat %u used an ability in no known"
+                                     " slot (gon='%s') -- peer cannot resolve it",
+                         (unsigned)summon, (unsigned)root, msg.gon[0] ? msg.gon : "?");
+        }
+        sent_log_push(msg);
+        if (net_send_action(msg)) {
+            g.outstanding = true;
+            ++g.stats.sent;
+            log_line("LOCKSTEP", "-> summon %u of cat %u %s slot=%u:%u target=(%d,%d) gon=%s",
+                     (unsigned)summon, (unsigned)root,
+                     a.type == TA_EndTurn ? "endturn" : "ability",
+                     msg.slot_kind, msg.slot_index, msg.tx, msg.ty,
+                     msg.gon[0] ? msg.gon : "-");
+        }
+        return false;
+    }
+    ActionMsg msg{};
+    if (!pend_take(root, msg, summon)) {
+        uint32_t none = TA_None;
+        mem_write(out, &none, sizeof(none));
+        return true;
+    }
+    apply_remote(msg, actor, out);
+    return true;
+}
+
 bool lockstep_fill_choice(void* brain, void* out) {
     if (!g.active || !brain || !out) return false;
     if (g.halted) {
@@ -2414,13 +2571,36 @@ bool lockstep_fill_choice(void* brain, void* out) {
 
     uint8_t cat = cat_index_of(actor);
     // Recorded before the AI and barrier branches below, so it tracks every
-    // turn rather than only the ones this function goes on to act upon. A
-    // summon (kNoCat) is nobody's, same as an AI cat.
+    // turn rather than only the ones this function goes on to act upon.
     g.local_actor = (cat != kNoCat) && g.local_cat[cat];
     g.peer_actor  = (cat != kNoCat) && g.human_cat[cat] && !g.local_cat[cat];
-    if (cat == kNoCat) return false;      // a summon: not in the snapshot, so
-                                          // neither peer treats it as owned and
-                                          // both let their own AI drive it.
+
+    // A summon: not in the snapshot. An AI one is left to both peers' own
+    // brains, like an AI cat; a player-controlled one (a druid's crow) is driven
+    // by the player who owns the cat it descends from -- see spawner_of.
+    uint8_t summon = 0;
+    if (cat == kNoCat) {
+        if (!human_brained(actor)) return false;
+        cat = summon_root(actor);
+        const bool local = summon_is_local(cat);
+        g.local_actor = local;
+        g.peer_actor  = !local;
+        summon = summon_ordinal(actor, cat);
+        if (!summon) {
+            // Not in the live list yet: nobody can name it, so nobody acts.
+            uint32_t none = TA_None;
+            mem_write(out, &none, sizeof(none));
+            return true;
+        }
+        if (!g.said_summon) {
+            g.said_summon = true;
+            log_line("LOCKSTEP", "a player-controlled summon is acting (descended from %s%u)"
+                                 " -- %s drives it", cat == kNoCat ? "no cat, " : "cat ",
+                     cat == kNoCat ? 0u : (unsigned)cat,
+                     local ? "this player" : "the other player");
+        }
+        return fill_summon(cat, summon, local, actor, out);
+    }
 
     // An AI cat is decided locally on BOTH peers -- never sent, never injected,
     // never suppressed. Getting this wrong is a deadlock, not a desync: a cat
@@ -2818,7 +2998,9 @@ bool     lockstep_peer_actor() { return g.active && g.snapped && !g.halted && g.
 bool lockstep_peer_owns_character(const void* character) {
     if (!g.active || !g.snapped || !character) return false;
     const uint8_t cat = cat_index_of(character);
-    if (cat == kNoCat)      return false;   // a summon: nobody's, both AIs drive it
+    if (cat == kNoCat)                      // a summon: a player-controlled one is
+        return human_brained(character) &&  // its summoner's owner's
+               !summon_is_local(summon_root(character));
     if (!g.human_cat[cat])  return false;   // an AI cat: decided locally on both
     return !g.local_cat[cat];
 }

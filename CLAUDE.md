@@ -270,10 +270,29 @@ renumber every cat mid-battle. Pointers are stable *within* one battle (across
 runs, 0 of 21 matched).
 
 **Summons are therefore NOT in the snapshot**, and both peers let their own brain
-drive them. Correct as long as summons are AI-driven — observed working. **A
-summon with a `PlayerBrain` would be an unhandled double-control desync**:
-neither peer owns it, both wait for a local click. If you can ever click a
-summon, that is the bug.
+drive them — when they are AI. **A summon with a `PlayerBrain` exists** (a
+druid's crows; the game's own name is "ControlledFamiliar", Character::BeginTurn
+emits `StartTurn_ControlledFamiliar` for a `PlayerBrain` — class id `0x5D3` — on
+a Character with no `CatData` at `+0x88`). It is now driven by the player who
+owns the roster cat it descends from: `sub_14011C0A0(spawner, spawned, …)`
+writes `Character+0x468` = the spawner and `+0x470` = the spawner's own `-8`
+tag, and `DieWhenSpawnerDies` (slot 101) / `SpawnerCatDataReference` read it
+back with exactly that validity test. On the wire it is `ACTION.actor` = the
+root roster cat plus `ACTION.summon` = its 1-based position among the live
+list's human-brained summons of that root (proto 45). No spawner → the host.
+A player-controlled unit already in the snapshot (spawned at battle start) is
+split the same way, by `party_split`. **Not yet run against a real druid.**
+
+**Statuses and passives can take a human cat's decision away, and that is
+already safe.** `Brain::GetChoice` (`0x140138590`) asks every passive (vtable
+`+0x378` → `+0x380`) and then every status (`+0x518`) for an override before
+the brain's own `+0xF8`. `Rabies` (passive), `Uncontrollable`, `Charmed`,
+`Fear` override `+0x380`; Rabies draws `randfloat` on `TLS+0x178` to pick
+`rabies_enemy` / `rabies_any` and then derives an AI decision. The original
+runs on BOTH peers, so the override's draws happen on both; the non-owner's
+result is replaced by the owner's, and `h_GetChoice` puts the stream back on
+every poll that ends undecided. Reported from another co-op mod as a desync
+source; here it is covered by construction, **not yet measured live.**
 
 ### Character state — the fields `state_hash` covers
 

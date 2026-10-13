@@ -29,7 +29,7 @@ int main() {
         a.turn = 7; a.actor = 3; a.type = 2;
         a.battle_id = 0x211f6ea51e365ae0ULL;   // a real node seed0, from a log
         a.slot_kind = 4; a.slot_index = 1;
-        a.b30 = 1; a.b31 = 0;
+        a.b30 = 1; a.b31 = 0; a.summon = 2;
         a.tx = 5; a.ty = -3; a.dx = -1; a.dy = 0;
         strcpy_s(a.gon, "wp_BearTraps");
 
@@ -46,6 +46,7 @@ int main() {
         check(b.turn == 7 && b.actor == 3 && b.type == 2, "turn/actor/type");
         check(b.slot_kind == 4 && b.slot_index == 1, "slot identity");
         check(b.b30 == 1 && b.b31 == 0, "the two tail bytes");
+        check(b.summon == 2, "summon ordinal");
         check(b.tx == 5 && b.ty == -3, "target survives a negative");
         check(b.dx == -1 && b.dy == 0, "direction survives a negative");
         check(strcmp(b.gon, "wp_BearTraps") == 0, "GON name, the second identity");
@@ -501,6 +502,7 @@ int main() {
         w.u8v(MSG_ACTION);
         w.u64v(9);                      // battle_id, ahead of turn on the wire
         w.u32v(1); w.u8v(0); w.u8v(2); w.u8v(0); w.u8v(0); w.u8v(0); w.u8v(0);
+        w.u8v(0);                       // summon
         w.i32v(0); w.i32v(0); w.i32v(0); w.i32v(0);
         char big[200]; memset(big, 'x', sizeof(big)); big[199] = 0;
         w.str(big);                     // Writer clamps to 255
