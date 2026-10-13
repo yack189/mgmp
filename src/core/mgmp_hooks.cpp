@@ -698,6 +698,19 @@ void __fastcall h_FurnPickup(void* piece, void* mouse) {
     if (!furn_pickup_allowed(piece)) return;
     o_FurnPickup(piece, mouse);
 }
+// Both take their std::string / std::function by value (the callee's to
+// destroy), so a swallowed call leaks one small temporary -- once per departure.
+typedef void (__fastcall* fn_four)(void*, void*, void*, void*);
+fn_four o_RunStart = nullptr;
+void __fastcall h_RunStart(void* a, void* b, void* c, void* d) {
+    if (!town_run_start_allowed()) return;
+    o_RunStart(a, b, c, d);
+}
+fn_four o_RunStartScripted = nullptr;
+void __fastcall h_RunStartScripted(void* a, void* b, void* c, void* d) {
+    if (!town_run_start_allowed()) return;
+    o_RunStartScripted(a, b, c, d);
+}
 fn_this o_PoopClean = nullptr;
 void __fastcall h_PoopClean(void* piece) {
     if (!house_poop_clean(piece)) return;
@@ -910,6 +923,8 @@ const Binding kBindings[] = {
     { T_DlgBubble,        (void*)&h_DlgBubble,        (void**)&o_DlgBubble },
     { T_PipeDone,         (void*)&h_PipeDone,         (void**)&o_PipeDone },
     { T_FurnPickup,       (void*)&h_FurnPickup,       (void**)&o_FurnPickup },
+    { T_RunStart,         (void*)&h_RunStart,         (void**)&o_RunStart },
+    { T_RunStartScripted, (void*)&h_RunStartScripted, (void**)&o_RunStartScripted },
     { T_AnimSetState,     (void*)&h_AnimSetState,     (void**)&o_AnimSetState },
     { T_UpdateDecision,   (void*)&h_UpdateDecision, (void**)&o_UpdateDecision },
 

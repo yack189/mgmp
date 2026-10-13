@@ -187,7 +187,8 @@ Cls class_of(uintptr_t vt) {
             // and the colorless-cat confirm nested inside it (0x140EE22C0)
             // both carry "init@ClassChooser" in their type names.
             else if (strstr(nm, "init@ClassChooser")) c = Cls::ChooserStart;
-            else if (strstr(nm, "ClassChooser") || strstr(nm, "ClassTagBox")) c = Cls::Chooser;
+            else if (strstr(nm, "ClassChooser") || strstr(nm, "ClassTagBox") ||
+                     strstr(nm, "ActSelectionScreen")) c = Cls::Chooser;
             // Shop::refresh_shopitem (Shop_BuyButton), Shop::initShop
             // (Shop_ExitButton), Shop::init (a chest's items).
             else if (strstr(nm, "@Shop@glaiel")) c = Cls::Shop;
@@ -308,17 +309,21 @@ bool in_run_shop(void* button) {
     return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Shop") == 0;
 }
 
-// A shop opened from the house (Jack's, Tracy's furniture): one wallet, so the
-// host presses, the same as anything else in an office.
-bool in_house_shop(void* button) {
+// A shop opened from the house (Jack's, Tracy's furniture): one wallet and one
+// stock, so the host presses, the same as anything else in an office. Known by
+// the button's own callback (Shop::refresh_shopitem, Shop::initShop, ...) as
+// well as by its scene -- whatever scene the office builds the shop in.
+bool in_house_shop(void* button, Cls cls) {
     if (!leave_scene_live("House")) return false;
+    if (cls == Cls::Shop) return true;
     char nm[24];
     return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "Shop") == 0;
 }
 
 bool in_chooser_scene(void* button) {
     char nm[24];
-    return scene_name(button, nm, sizeof(nm)) && strcmp(nm, "ClassChooser") == 0;
+    return scene_name(button, nm, sizeof(nm)) &&
+           (strcmp(nm, "ClassChooser") == 0 || strcmp(nm, "ActSelection") == 0);
 }
 
 Kind kind_of(void* button, const Key& k, Cls cls) {
@@ -329,7 +334,7 @@ Kind kind_of(void* button, const Key& k, Cls cls) {
     if (cls == Cls::Chooser || in_chooser_scene(button)) return Kind::Choose;
     if (in_run_shop(button)) return Kind::RunShop;
     if (g.office && in_office_scene(button)) return Kind::Office;
-    if (in_house_shop(button)) return Kind::Office;
+    if (in_house_shop(button, cls)) return Kind::Office;
     if (is_backpack(button, k)) return Kind::InvOpen;
     if (g.inv_shared && in_inventory_scene(button) &&
         strncmp(k.name, "Button_PauseMenu_", 17) != 0)
@@ -476,6 +481,20 @@ void town_set_base(uintptr_t base) {
 bool town_in_office() { return g.office; }
 bool town_awaiting_run() { return g.awaiting_run != 0; }
 bool town_presses_pending() { return g.pq_n != 0; }
+
+// T_RunStart / T_RunStartScripted. A client goes through the chooser, the
+// items and the act screen with the host, but its adventure is always the
+// host's, loaded from the host's save once it is on the map -- the same reload
+// the end of the day uses. So the press that would start this machine's own
+// run does everything up to that, and stops there.
+bool town_run_start_allowed() {
+    if (!is_client()) return true;
+    g.awaiting_run = GetTickCount64();
+    g.inv_shared = false;
+    log_line("TOWN", "the host is starting the adventure -- this player's own run is not"
+                     " started; the host's loads here as soon as it is on the map");
+    return false;
+}
 bool town_shop_refused_recently() {
     return g.shop_refused_at && GetTickCount64() - g.shop_refused_at < 4000;
 }
@@ -512,6 +531,10 @@ bool town_on_button_click(void* button) {
     const uint8_t want = cls == Cls::Drawer ? want_after_press(impl_of(button)) : 0;
 
     if (kind == Kind::InvOpen && is_host()) inv_opened();
+    // The class chooser's start leads to the house storage's equip screen
+    // (MewDirector::DoHouseStorageEquipFlow, scene StorageItems): shared like
+    // the backpack, so either player picks the cats' items.
+    if (kind == Kind::Start && is_host()) inv_opened();
     if (kind == Kind::RunShop && !is_host()) {
         // The host shops for both: one wallet, one stock, one purchase.
         g.shop_refused_at = GetTickCount64();
@@ -528,8 +551,7 @@ bool town_on_button_click(void* button) {
                      kind == Kind::Choose || kind == Kind::Start ? "the class chooser" :
                      "an office");
         if (kind == Kind::Start)
-            log_line("TOWN", "starting the adventure -- the other player will load it as"
-                             " soon as it is on the map");
+            log_line("TOWN", "classes chosen -- both players go on to the cats' items");
         return true;
     }
     // A client asks; the host presses; the press comes back here.
@@ -544,15 +566,6 @@ void town_on_press(uint8_t from, const TownPressMsg& m) {
     if (!net_active()) return;
     // A request goes to the host; a press comes from it. Nothing else.
     if (m.request ? !is_host() : !is_client()) return;
-    // The host started its adventure from the class chooser. Not repeated here:
-    // a client's run is always the host's, loaded from its save -- this one
-    // waits in the chooser until that save arrives.
-    if (!m.request && g.base && m.vt_rva && class_of(g.base + m.vt_rva) == Cls::ChooserStart) {
-        g.awaiting_run = GetTickCount64();
-        log_line("TOWN", "the host started the adventure from the class chooser -- waiting"
-                         " for its run to load here");
-        return;
-    }
     if (g.pq_n >= kQueue) {
         ++g.dropped;
         log_line("TOWN", "!! %u presses already waiting -- dropping '%s' from peer %u",
@@ -595,7 +608,7 @@ void town_on_button_post(void* button) {
         log_line_lvl(LogLevel::Trace, "TOWN", "pressing '%s' %s#%u -- the host did",
                      k.name, k.tag, (unsigned)k.ordinal);
     }
-    if (strcmp(k.name, "Map_Backpack") == 0) inv_opened();
+    if (strcmp(k.name, "Map_Backpack") == 0 || cls == Cls::ChooserStart) inv_opened();
     if (run_callback(button)) ++g.done;
 }
 
@@ -727,6 +740,10 @@ void town_pump() {
     if (g.awaiting_run && ((!leave_scene_live("House") && !leave_scene_live("ClassChooser")) ||
                            now - g.awaiting_run > 120000))
         g.awaiting_run = 0;
+    // Through the chooser and the act screen (and the swipe between them and
+    // the items), the shared equip screen is still to come or still up.
+    if (g.inv_shared && (leave_scene_live("ClassChooser") || leave_scene_live("ActSelection")))
+        g.inv_since = now;
     if (g.inv_shared && now - g.inv_since > 3000 && !leave_scene_live("CatStatus") &&
         !leave_scene_live("StorageItems")) {
         g.inv_shared = false;

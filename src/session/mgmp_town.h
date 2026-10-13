@@ -19,9 +19,16 @@
 // DEPARTING. The sign that departs (four cats in the box) is a way out like
 // the NPC map: either player presses it, both go into the class chooser, and
 // every press in there goes through the host and comes back to both -- either
-// player may pick the collars. The chooser's start button starts the HOST's
-// adventure only; a client waits in its chooser until the host's run is
-// published and then loads it (mgmp_house's reload, the same as a new day).
+// player may pick the collars. The chooser's start runs on both and leads on
+// to the cats' items (StorageItems, shared like the backpack: either player
+// equips, every press through the host) and the act screen (pressed through
+// the host too). Whatever would then start a run -- an act chosen, or the
+// items' done with no act screen -- starts the HOST's only: on a client the
+// run start itself (T_RunStart) is refused, and the host's run is loaded from
+// its save once published (mgmp_house's reload, the same as a new day).
+//
+// THE HOUSE'S SHOPS (Jack's, Tracy's) are entered by both and pressed by the
+// host, like any office -- one wallet, one stock.
 //
 // THE ADVENTURE'S SHOPS are the host's. A client's presses there are refused;
 // the host's purchases are pressed on the client as well, with its stream, so a
@@ -63,6 +70,7 @@ void town_pump();          // once a frame
 bool town_in_office();     // for the on-screen notice
 bool town_awaiting_run();  // client: the host started the adventure, loading it
 bool town_presses_pending(); // client: host presses still waiting to be made here
+bool town_run_start_allowed(); // T_RunStart: false on a client -- the run is the host's
 bool town_shop_refused_recently();   // client: pressed in the host's shop
 void town_shutdown();
 

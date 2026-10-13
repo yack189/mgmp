@@ -16,6 +16,7 @@
 #include "mgmp_runhist.h"
 #include "mgmp_leave.h"
 #include "mgmp_house.h"
+#include "mgmp_town.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -882,7 +883,8 @@ void savefile_on_message(const SaveFileMsg& m) {
              m.slot, m.name, m.size, (unsigned long long)h);
 
     // In the shared house, a fresh save is the host's new day: go and load it.
-    if (m.fresh && (leave_scene_live("House") || house_night_replaying()))
+    if (m.fresh && (leave_scene_live("House") || house_night_replaying() ||
+                    town_awaiting_run()))
         house_request_reload();
 }
 

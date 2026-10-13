@@ -1475,6 +1475,26 @@ the client overwrites its own whenever no host press is waiting.
 (`0x14027CE70`, office 4/5) — a way out like the NPC map. A button in a `Shop`
 scene while `House` is live is pressed by the host.
 
+Measured 2026-10-13: the house-shop presses were NOT mirrored by scene name —
+the shop's buttons are not in a scene called `Shop` — so they are now known by
+callback class (`@Shop@glaiel`) while `House` is live. And a piece dropped
+where it does not fit **floats** (piece update: `sub_1402EE980` refuses the
+spot, `+0x48` stays null, `+0x2B0` clears, the piece shakes red at the drop
+point): its record says storage while its piece still exists. It keeps its
+hold until it lands.
+
+**After the class chooser.** `ClassChooser::close` (the start's transition
+lambda, vt `0x140EE1FD8` → `sub_14013FD40`) applies the classes and calls the
+continuation at `ClassChooser+0x90`, which leads to
+`MewDirector::DoHouseStorageEquipFlow` — the `StorageItems` equip screen —
+whose lambda (vt `0x140F15A80`, `sub_1403CBFB0`) opens `ActSelection` or
+starts the run at `alley.gon`. Every way a run leaves the house ends in
+`sub_1403B0D20(MewDirector*, std::string level)` (SelectAct's three sites and
+that lambda) or `sub_1403B1680` (a queued scripted run from
+`ButchBox::depart`); both are refused on a client (`T_RunStart`,
+`T_RunStartScripted`), so the client follows the host through every screen
+and then loads the host's published run.
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

@@ -209,6 +209,8 @@ void hook_defaults() {
     g_cfg.hook[T_DlgBubble]      = false;
     g_cfg.hook[T_PipeDone]       = false;
     g_cfg.hook[T_FurnPickup]     = false;
+    g_cfg.hook[T_RunStart]       = false;
+    g_cfg.hook[T_RunStartScripted] = false;
 
     // The highlight suppressor. Solo, there is nobody to draw another player's
     // aim for, so the guard it reads can never be raised and the hook would be
@@ -300,6 +302,8 @@ void hooks_implied_by(bool net_configured) {
         g_cfg.hook[T_DlgBubble]      = true;
         g_cfg.hook[T_PipeDone]       = true;
         g_cfg.hook[T_FurnPickup]     = true;
+        g_cfg.hook[T_RunStart]       = true;
+        g_cfg.hook[T_RunStartScripted] = true;
         if (tune::kChoice) {
             g_cfg.hook[T_ButtonClick]  = true;
             g_cfg.hook[T_ButtonUpdate] = true;

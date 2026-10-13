@@ -109,6 +109,10 @@ enum Target : int {
                          // -- refused when the pipe is already empty
     T_FurnPickup,        // FurniturePiece pick-up (sub_1402ED690) -- refused
                          // for a piece the other player has in hand
+    T_RunStart,          // MewDirector start an adventure at a level
+                         // (sub_1403B0D20) -- refused on a client
+    T_RunStartScripted,  // MewDirector start a queued scripted run
+                         // (sub_1403B1680) -- refused on a client
     T_COUNT
 };
 
@@ -599,6 +603,15 @@ static const TargetDesc kTargets[T_COUNT] = {
     // reads piece+0x2B0: refused, the piece is simply not held, and the caller
     // shows its hover tooltip as for any piece under the mouse.
     { 0x002ED690, "FURNPICKUP", "FurniturePiece pick up (sub_1402ED690)" },
+    // void(MewDirector*, std::string level). The four ways a run leaves the
+    // house all end here: ActSelectionScreen::SelectAct's three acts
+    // (0x140069B79/C33/CF9) and DoHouseStorageEquipFlow's lambda with no act
+    // screen ("alley.gon", 0x1403CC069). Results unused at every site.
+    { 0x003B0D20, "RUNSTART",  "MewDirector start adventure (sub_1403B0D20)" },
+    // void(MewDirector*, std::string, std::function*). ButchBox::depart's
+    // lambda (0x1400AE445) when a scripted run is queued at
+    // *(MewDirector+0x5A8)+0x468.
+    { 0x003B1680, "RUNSCRIPT", "MewDirector start scripted run (sub_1403B1680)" },
 };
 
 // Coarse module guard, checked before the per-target signatures.

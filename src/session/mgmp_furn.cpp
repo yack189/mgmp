@@ -64,6 +64,8 @@ constexpr uint32_t  kMaxGhosts  = 128;
 constexpr uint32_t  kSentRing   = 32;
 // A hold the other player never let go of (a crash, a dropped line).
 constexpr ULONGLONG kHoldMaxMs  = 90000;
+// ...so a piece still in hand (or left floating) says so again this often.
+constexpr ULONGLONG kHoldRenewMs = 30000;
 // Two players who moved the same piece within this long of each other: the
 // host's placement wins.
 constexpr ULONGLONG kRaceMs     = 30000;
@@ -87,10 +89,13 @@ struct Base {
     bool     seen = false;
 };
 
-struct PieceOf { void* rec; void* piece; bool hand; };
+// hand: held or riding on a held piece. floating: put down where it does not
+// fit -- off any grid, shaking red where it was dropped, waiting to be picked
+// up again (sub_1402ED8E0's drop with sub_1402EE980 refusing the spot).
+struct PieceOf { void* rec; void* piece; bool hand; bool floating; };
 
 // This player has it in hand, and the other was told (from = where it stood).
-struct HeldSent { uint64_t id; char name[40]; Loc loc; };
+struct HeldSent { uint64_t id; char name[40]; Loc loc; ULONGLONG at; };
 // The other player has it in hand: it is ghosted here and cannot be picked up.
 struct Lock     { char name[40]; Loc loc; ULONGLONG at; };
 struct Ghost    { void* piece; double alpha; };
@@ -190,6 +195,9 @@ uint32_t pieces(void* scene, PieceOf* out, uint32_t cap) {
         mem_read((const uint8_t*)p + kFP_Held, &held, 1);
         mem_read((const uint8_t*)p + kFP_Carried, &carried, 1);
         o.hand = held || carried;
+        void* grid = nullptr;
+        mem_read((const uint8_t*)p + kFP_Grid, &grid, sizeof(grid));
+        o.floating = !o.hand && !grid;
         if (o.rec) ++k;
     }
     return k;
@@ -295,12 +303,27 @@ void scan(void* scene) {
                      m.to_grid[0] ? m.to_grid : "storage", m.to_x, m.to_y);
         b->loc = now;
     }
-    // Put down: say so, after the move (if any) the loop above just sent.
+    // Put down: say so, after the move (if any) the loop above just sent. A
+    // piece left floating is not put down -- it stands nowhere, so the other
+    // player keeps seeing it ghosted where it was until it lands somewhere.
+    const ULONGLONG t = GetTickCount64();
     for (uint32_t i = 0; i < g.nheld;) {
         bool still = false;
         for (uint32_t k = 0; k < np && !still; ++k)
-            still = ps[k].hand && id_of(ps[k].rec) == g.held[i].id;
-        if (still) { ++i; continue; }
+            still = (ps[k].hand || ps[k].floating) && id_of(ps[k].rec) == g.held[i].id;
+        if (still) {
+            if (t - g.held[i].at > kHoldRenewMs) {
+                g.held[i].at = t;
+                FurnMsg m{};
+                m.op = kFurnHold;
+                strncpy_s(m.name, g.held[i].name, _TRUNCATE);
+                strncpy_s(m.from_grid, g.held[i].loc.grid, _TRUNCATE);
+                m.from_x = g.held[i].loc.x; m.from_y = g.held[i].loc.y;
+                net_send_furn(m);
+            }
+            ++i;
+            continue;
+        }
         FurnMsg m{};
         m.op = kFurnRelease;
         strncpy_s(m.name, g.held[i].name, _TRUNCATE);
@@ -505,6 +528,7 @@ void watch_hands(void* scene) {
         h.id = id;
         strncpy_s(h.name, name, _TRUNCATE);
         h.loc = b->loc;
+        h.at = GetTickCount64();
         FurnMsg m{};
         m.op = kFurnHold;
         strncpy_s(m.name, name, _TRUNCATE);
