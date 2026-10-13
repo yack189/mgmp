@@ -78,6 +78,7 @@ struct NetMsg {
     HouseNightMsg housenight;
     TownPressMsg townpress;
     DialogMsg dialog;
+    FurnMsg furn;
     HaltMsg   halt;
     char      refuse[192] = {};
 };
@@ -171,6 +172,7 @@ bool net_send_housepoop(const HousePoopMsg& m);   // either -> other
 bool net_send_housenight(const HouseNightMsg& m); // host -> client
 bool net_send_townpress(const TownPressMsg& m);   // either -> other
 bool net_send_dialog(const DialogMsg& m);         // host -> client
+bool net_send_furn(const FurnMsg& m);             // either -> other
 
 // The run's cat-id list. Heap-framed like CATDATA, since a long run outgrows the
 // 512-byte stack frame the small messages use.

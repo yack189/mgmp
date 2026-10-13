@@ -54,6 +54,7 @@ enum DataSym : int {
                          // bottom / top edge, of the content rect. The NDC a mouse
                          // fraction of the content rect maps to (sub_140986EE0)
     D_CurScene,          // Scene*: the one being updated; +0x4DC blocks input
+    D_HouseInventory,    // HouseInventory*: the furniture records
     D_COUNT
 };
 uintptr_t addr_of_data(DataSym d);

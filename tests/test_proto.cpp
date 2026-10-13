@@ -744,6 +744,21 @@ int main() {
         check(r.pos == r.len, "HOUSENIGHT consumed exactly the frame");
     }
 
+    printf("\n-- FURN round-trip --\n");
+    {
+        FurnMsg m{}; strcpy_s(m.name, "BigScratchPost"); strcpy_s(m.from_grid, "");
+        strcpy_s(m.to_grid, "floor_main"); m.to_x = 7; m.to_y = -2; m.orient_x = -1;
+        m.orient_y = 1; m.order = 300042;
+        uint32_t n = enc_furn(buf, sizeof(buf), m);
+        Reader r(buf, n);
+        check(n > 0 && r.u8v() == MSG_FURN, "FURN encodes with its type");
+        FurnMsg o{};
+        check(dec_furn(r, o) && strcmp(o.name, "BigScratchPost") == 0 && !o.from_grid[0] &&
+              strcmp(o.to_grid, "floor_main") == 0 && o.to_x == 7 && o.to_y == -2 &&
+              o.orient_x == -1 && o.orient_y == 1 && o.order == 300042, "FURN fields survive");
+        check(r.pos == r.len, "FURN consumed exactly the frame");
+    }
+
     printf("\n-- TOWNPRESS and DIALOG round-trip --\n");
     {
         TownPressMsg m{}; m.request = 1; m.vt_rva = 0xF03688; m.ordinal = 3;

@@ -1425,6 +1425,34 @@ comes back with the host's sim stream); inside an office the host presses; the
 client's dialog clicks are blocked for the tick and the host's closes, skips
 and wakes are applied in order. **Not yet run against a real session.**
 
+### Furniture (read on `4127cd6a`)
+
+**A placed piece is its HouseInventory record.** `*(0x1413DA9A0)` is the
+HouseInventory: `{cap @0x38, count @0x3C, Record** @0x40}`. A record is 0x68
+bytes (`sub_140205B00` builds one; its id is `++0x1413C1920`, a per-process
+counter): id `+0x00`, item name `+0x08`, flags `+0x28`, **grid name `+0x30`
+(empty = in storage)**, cell `+0x50`, mirror `+0x58` (`round(scale)` x/y),
+draw order `+0x60`.
+
+| | |
+|---|---|
+| `sub_1401ACA10(scene, entity, u64* id)` | builds a `FurniturePiece` (type `0x3F0`) for a record; its init `sub_1402EC7A0` **places it on the record's grid** (`sub_1401E65B0` finds a `FurnitureGrid` by the std::string at grid`+0x40`) — this is how the house loads (`sub_1401E6D60`) |
+| `sub_1402EED50(piece, grid)` | place: `+0x48 = grid`, marks cells, writes the record's grid/cell/mirror |
+| `sub_1402EEEF0(piece)` | unplace: clears the cells, `+0x48`, the record's grid name |
+| `sub_1402ED690` | pick up (piece click): unplace, `sub_1402EF4C0` collects the pieces that lose their support as children (`+0x2D0`, each `+0x2B1`), `+0x2B0` = held |
+| `sub_1402ED8E0` | piece update: drop = place, or over the menu → `sub_1401A6BE0` + `sub_14094EBA0` (destroy) |
+
+Piece: `+0x48` grid, `+0x2B0` held, `+0x2B1` carried, `+0x2D8` record*, `+0x2E0`
+record id. **The build menu has no state of its own**: `FurnitureBuildingUI`
+(type `0x3EA`) update `sub_1401A5AB0` rebuilds its taken-set (`+0x88`) every frame
+from the ids of the live pieces, and the list from the records not in it.
+
+Co-op (`mgmp_furn`): each peer diffs its records every 200 ms and sends a moved
+record's name + old + new location (skipping one in a hand, or floating with no
+grid); the other finds the record by name + old location, unplaces and destroys
+its piece, rewrites the record, and rebuilds the piece if it stands somewhere.
+**Not yet run against a real session.**
+
 ### Departing, the class chooser, the adventure's shops (read on `4127cd6a`)
 
 The house's sign is one button (`House::init` lambda_1, vt `0x140EFC860`,

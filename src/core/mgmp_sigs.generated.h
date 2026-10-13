@@ -173,6 +173,17 @@ static const SigTargetDesc kCallSigs[] = {
       "40 53 48 83 EC 40 48 8D 54 24 20 48 8B D9 E8 ? ? ? ? 83 7C 24 24 00 0F 84 ? ? ? ? 65 48 8B 04 25 58 00 00 00" },
     { 0x002EF9D0, "FurniturePiece clean poop (sub_1402EF9D0)",
       "40 53 48 83 EC 50 48 8B D9 48 8B 89 D8 02 00 00 48 85 C9 0F 84 ? ? ? ? 4C 8B 41 18 48 83 C1 08" },
+    // Added by hand 2026-10-13, all unique in .text of 4127cd6a.
+    { 0x002EEEF0, "FurniturePiece unplace (sub_1402EEEF0)",
+      "40 55 57 48 83 EC 28 48 8B 79 48 48 8B E9" },
+    { 0x0094EBA0, "Component destroy (sub_14094EBA0)",
+      "40 56 48 83 EC 20 48 8B 71 18 48 85 F6" },
+    { 0x0096B3E0, "Scene new entity (sub_14096B3E0)",
+      "40 57 48 83 EC 20 80 B9 B0 04 00 00 00 48 8B F9 74 08 33 C0 48 83 C4 20 5F C3 B9" },
+    { 0x001ACA10, "FurniturePiece create from record (sub_1401ACA10)",
+      "48 89 5C 24 10 48 89 6C 24 18 56 57 41 56 48 83 EC 20 4D 8B F0 48 8B EA 48 8B D9 80 B9 B0 04 00 00 00 74 07 33 C0 E9 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? 48 8B F8 48 89 44 24 40 48 85 C0 74 ? 33 D2 41 B8 30 03 00 00" },
+    { 0x000520D0, "std::string::assign(const char*, size_t) (sub_1400520D0)",
+      "48 89 5C 24 10 48 89 6C 24 18 56 57 41 57 48 83 EC 20 48 8B 69" },
     { 0x001EF470, "House::EndDay (sub_1401EF470)",
       "48 83 EC 28 80 B9 B0 00 00 00 00 75 ? C6 81 B0 00 00 00 01 48 8B 05 ? ? ? ? 80 78 38 00" },
 };
@@ -196,6 +207,11 @@ static const SigDataDesc kSigData[] = {
     { 0x013C18F0, "CurScene",
       "48 8B 05 ? ? ? ? 48 85 C0 74 0C 80 B8 DC 04 00 00 00 74 03 32 C0 C3 F2 0F 10 49 40 0F 57 C0 66 0F 2F C8 73 08 F2 0F 10 0D ? ? ? ? 83 3D ? ? ? ? 02 B8 10 00 00 00",
       3, 7 },  // the input query sub_140985AF0
+    // The HouseInventory singleton (furniture records at +0x3C count / +0x40
+    // data), as the poop clean-up loads it before removing a record.
+    { 0x013DA9A0, "HouseInventory",
+      "48 8B 93 E0 02 00 00 48 8B 0D ? ? ? ? E8 ? ? ? ? 48 8B 43 40",
+      10, 14 },  // via 0x1402EFBA1 in sub_1402EF9D0
 };
 static const int kSigDataCount = 3;
 

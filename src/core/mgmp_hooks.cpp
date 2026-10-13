@@ -51,6 +51,7 @@
 #include "mgmp_follow.h"
 #include "mgmp_house.h"
 #include "mgmp_town.h"
+#include "mgmp_furn.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -1039,6 +1040,7 @@ int hooks_install() {
     cursor_set_base(g_base);
     house_set_base(g_base);
     town_set_base(g_base);
+    furn_set_base(g_base);
     choice_set_base(g_base);
     savefile_set_base(g_base);
     leave_set_base(g_base);

@@ -11,6 +11,7 @@
 #include "mgmp_ui.h"
 #include "mgmp_follow.h"
 #include "mgmp_rng.h"
+#include "mgmp_furn.h"
 
 #include <windows.h>
 #include <cmath>
@@ -604,6 +605,9 @@ void house_on_update(void* house) {
                          " %.1f,%.1f", g.mx, g.my);
         }
     }
+
+    // --- the furniture: either player places and moves, both see it ---------
+    furn_on_house_update(house);
 
     // --- the cats -------------------------------------------------------------
     if (!g.cats_ok || !net_active()) return;

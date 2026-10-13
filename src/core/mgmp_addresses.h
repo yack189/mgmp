@@ -693,6 +693,14 @@ enum Call : int {
     C_PoopSpawn,             // void(FurnitureGrid*) -- FurnitureGrid vtable slot
                              // 34: a "poop" item on a random free cell
     C_PoopClean,             // the T_PoopClean function, called to mirror
+    C_FurnUnplace,           // void(FurniturePiece*) -- off its grid: clears the
+                             // grid's cells, piece+0x48 and the record's grid name
+    C_CompDestroy,           // void(Component*) -- the destroy a piece put back in
+                             // storage gets (sub_14094EBA0)
+    C_SceneNewEntity,        // Entity*(Scene*) -- sub_14096B3E0
+    C_FurnCreate,            // FurniturePiece*(Scene*, Entity*, u64* record_id) --
+                             // placed on the record's grid if it names one
+    C_StrAssign,             // std::string*(std::string*, const char*, size_t)
     C_HouseEndDay,           // void(House*) -- the sign's end of the day: sets
                              // House+0xB0 and starts the fade into PassDay
     C_COUNT
@@ -941,6 +949,15 @@ static const CallDesc kCalls[C_COUNT] = {
     { 0x002E89C0, "CatPlacementArea remove (sub_1402E89C0)" },
     { 0x002EA9A0, "FurnitureGrid spawn poop (sub_1402EA9A0)" },
     { 0x002EF9D0, "FurniturePiece clean poop (sub_1402EF9D0)" },
+    // The furniture. A placed piece is its HouseInventory record (name +0x08,
+    // grid name +0x30, cell +0x50, mirror +0x58, order +0x60): the piece's own
+    // init, sub_1402EC7A0 via sub_1401ACA10, finds the grid by name
+    // (sub_1401E65B0) and places it there -- which is how the house loads.
+    { 0x002EEEF0, "FurniturePiece unplace (sub_1402EEEF0)" },
+    { 0x0094EBA0, "Component destroy (sub_14094EBA0)" },
+    { 0x0096B3E0, "Scene new entity (sub_14096B3E0)" },
+    { 0x001ACA10, "FurniturePiece create from record (sub_1401ACA10)" },
+    { 0x000520D0, "std::string::assign(const char*, size_t) (sub_1400520D0)" },
     { 0x001EF470, "House::EndDay (sub_1401EF470)" },
 };
 

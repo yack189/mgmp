@@ -18,6 +18,7 @@
 #include "mgmp_choice.h"
 #include "mgmp_house.h"
 #include "mgmp_town.h"
+#include "mgmp_furn.h"
 #include "mgmp_savefile.h"
 #include "mgmp_leave.h"
 #include "mgmp_party.h"
@@ -2247,6 +2248,9 @@ void lockstep_pump() {
                 break;
             case MSG_DIALOG:
                 town_on_dialog(m.from, m.dialog);
+                break;
+            case MSG_FURN:
+                furn_on_message(m.from, m.furn);
                 break;
 
             // Also not epoch-gated: a decision-screen choice belongs to a map
