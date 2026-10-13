@@ -228,6 +228,13 @@ void hooks_implied_by(bool net_configured) {
         // handshake, with nothing in the log to say why.
         g_cfg.hook[T_FrameBegin] = true;
 
+        // A wall-clock countdown in a turn-lockstep battle fires at a different
+        // turn on two machines running at different frame rates. The one
+        // ordinary-run user is the AstroZombie miniboss's AZ_LoseHead (3 s ->
+        // Cleanse + FullHeal), which would heal on one peer a turn before the
+        // other. Solo, the countdown stays the game's own.
+        g_cfg.hook[T_TimeDelayTick] = true;
+
         // The inventory push has no other route to the peer: without these the
         // host's bucket serialize goes into its own save file and nothing is
         // captured, which shows up as three failed buckets per map node rather

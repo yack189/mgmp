@@ -771,10 +771,11 @@ bool load_art(uint8_t mode) {
 // the function. The slot holds the real one. See kRva_SdlGetWindowSizeSlot.
 typedef int (__cdecl* fn_sdl_get_window_size)(void* window, int* w, int* h);
 
-fn_sdl_get_window_size sdl_size_fn(uint32_t rva) {
-    if (!g.base) return nullptr;
+fn_sdl_get_window_size sdl_size_fn(SdlSlot which) {
+    const uintptr_t slot = addr_of_sdl_slot(which);
+    if (!slot) return nullptr;
     void* p = nullptr;
-    if (!mem_read((const void*)(g.base + rva), &p, sizeof(p)) || !p) return nullptr;
+    if (!mem_read((const void*)slot, &p, sizeof(p)) || !p) return nullptr;
     return (fn_sdl_get_window_size)p;
 }
 
@@ -786,7 +787,7 @@ bool drawable_size(void* window, int& w, int& h) {
     if (!window) return false;
     static fn_sdl_get_window_size get_px = nullptr;
     static bool looked = false;
-    if (!looked) { looked = true; get_px = sdl_size_fn(kRva_SdlGetWindowSizePxSlot); }
+    if (!looked) { looked = true; get_px = sdl_size_fn(S_GetWindowSizeInPixels); }
     if (!get_px) return false;
     get_px(window, &w, &h);
     return w > 0 && h > 0;
@@ -803,8 +804,8 @@ bool mouse_space(void* window, int vw, int vh, int& mw, int& mh) {
     static bool looked = false;
     if (!looked) {
         looked   = true;
-        get_size = sdl_size_fn(kRva_SdlGetWindowSizeSlot);
-        get_px   = sdl_size_fn(kRva_SdlGetWindowSizePxSlot);
+        get_size = sdl_size_fn(S_GetWindowSize);
+        get_px   = sdl_size_fn(S_GetWindowSizeInPixels);
     }
     if (!get_size) return false;
 
@@ -1002,11 +1003,16 @@ int __cdecl overlay_swap_detour(void* window) {
 void overlay_set_base(uintptr_t base) {
     g.base = base;
 
-    void** slot = (void**)(base + kRva_SdlSwapSlot);
+    void** slot = (void**)addr_of_sdl_slot(S_GLSwapWindow);
     void*  prev = nullptr;
+    if (!slot) {
+        log_line("OVERLAY", "!! the SDL swap slot did not resolve -- the peer pointer and"
+                            " the panel are OFF");
+        return;
+    }
     if (!mem_read(slot, &prev, sizeof(prev)) || !prev) {
         log_line("OVERLAY", "!! the SDL swap slot at rva %08X does not hold a function"
-                            " -- the peer pointer is OFF", kRva_SdlSwapSlot);
+                            " -- the peer pointer is OFF", (unsigned)((uintptr_t)slot - base));
         return;
     }
 
@@ -1023,7 +1029,8 @@ void overlay_set_base(uintptr_t base) {
     *slot = (void*)&overlay_swap_detour;
     VirtualProtect(slot, sizeof(void*), old_prot, &old_prot);
 
-    trace("swap taken over: slot %08X was %p, now ours", kRva_SdlSwapSlot, prev);
+    trace("swap taken over: slot %08X was %p, now ours",
+          (unsigned)((uintptr_t)slot - base), prev);
 }
 
 void overlay_init() {

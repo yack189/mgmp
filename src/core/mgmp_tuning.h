@@ -81,8 +81,11 @@ constexpr const char* kReplayBrains = "PlayerBrain";
 // a deliberate reconnect -- and Steven counts every one of them. The penalty
 // was measuring our tooling, not the player.
 constexpr bool     kHookSaveScum  = true;
-// Convert TimeDelayStatusApplication's wall-clock countdown to a turn count.
-// Never yet run against real content -- the one reachable user is AZ_LoseHead.
+// Convert TimeDelayStatusApplication's wall-clock countdown to a turn count
+// in SOLO play too. Off: solo keeps the game's own timing. Any session turns
+// the hook on regardless (hooks_implied_by), because there the wall clock is a
+// desync. Never yet run against real content -- the one reachable user is
+// AZ_LoseHead; expect `TDELAY converted` / `TDELAY firing` lines when it is.
 constexpr bool     kHookTimeDelay = false;
 // Turn boundaries such a status waits before firing. 1 = the next boundary.
 constexpr uint32_t kTimeDelayTurns = 1;

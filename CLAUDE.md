@@ -50,7 +50,8 @@ exists to catch — and the fence caught nothing across 6327 suppressor calls an
 3. Detection debt: equipment is not in `state_hash`; **facing is not in it either
    and cannot be** (see the facing section). `STATEDUMP` is written and
    unit-tested but **has never fired in a real desync**.
-4. Validation debt: `hook_timedelay` has never run against real content;
+4. Validation debt: `hook_timedelay` has never run against real content (it is
+   now ON in every session — `hooks_implied_by` — and off solo);
    `RollChance` is unhooked in every lockstep run, so procs are unattributed. It
    is not separately gated — `debug.record` turns on all four RNG hooks including
    it, so "unhooked in every lockstep run" is a consequence of running those
@@ -61,11 +62,14 @@ exists to catch — and the fence caught nothing across 6327 suppressor calls an
 6. ~~Signature resolution has never run against an actually-updated build.~~
    **MEASURED 2026-09-12, and it worked** — see "Surviving an update, measured"
    below. 51/51 code patterns from the previous build matched **uniquely** in the
-   new one; the prediction held. The **three SDL_DYNAPI slots are still
-   hardcoded** — they were hand-migrated, and the third mechanism that would
-   resolve them is still unwritten.
+   new one; the prediction held. The **three SDL_DYNAPI slots are now resolved
+   too** (2026-10-13): each from a unique game call site → the thunk the call
+   lands on (`48 FF 25 disp32`) → its slot (`kSdlSlots` in `mgmp_resolve.cpp`).
+   A slot that does not resolve is 0 and the overlay turns itself off rather
+   than writing over some other SDL function.
 7. **Reach, not correctness:** transport is direct-IP only, so a real session
-   needs port forwarding at one end — `SteamNetworkingMessages002` is linked and
+   needs port forwarding at one end — or, as the players actually run it, Radmin
+   VPN (`COMO-JUGAR.md`) — `SteamNetworkingMessages002` is linked and
    unused, and there is no lobby API to move to. And **3–4 players has never been
    run**: the peer envelope, `PEERS` and the control split are all written for it,
    but written is not measured.
@@ -2243,13 +2247,16 @@ which lays the sections out at their VAs without executing anything, so every
 a last resort. Under `--force-scan` all 46 still resolved **uniquely**, which
 re-confirms uniqueness through the C++ path and not only through Python.
 
-**The three SDL_DYNAPI slots are the known gap and are still hardcoded.** No byte
-pattern can find them: every thunk is `jmp cs:off_...` and every default stub
-shares one shape, so a slot is indistinguishable from its neighbour. They need a
-third mechanism, designed but not written: locate the real implementation by a
-unique pattern (its own error strings identify it), then find the single qword in
-`.data` holding that address. Sound because the mod injects at `FrameBegin`, long
-after `SDL_InitDynamicAPI` has overwritten the table.
+**The three SDL_DYNAPI slots are resolved through the game's own call sites.** No
+byte pattern can find a slot or a thunk: every thunk is `48 FF 25 disp32` and
+every default stub shares one shape. But each thunk has a caller in game code
+whose surroundings are unique: `SDL_GL_SwapWindow` at the present (`0x1409B8018`,
+`mov rcx,[rsi+0DD0h]; test; jz; call; call`), `SDL_GetWindowSize` at
+`0x140A5C463` (followed by the window-flags query), `SDL_GetWindowSizeInPixels`
+at ApplicationBase's size refresh (`0x1409B71DD`). Pattern → `E8 rel32` → thunk
+→ verify `48 FF 25` → `disp32` → slot, checked to lie in the image and outside
+`.text`; drift from `kRva_*` is logged like any other. All three reproduce the
+pinned slots exactly on `4127cd6a`.
 
 ### Surviving an update — MEASURED, 2026-09-12
 

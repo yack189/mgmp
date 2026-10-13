@@ -59,6 +59,21 @@ enum DataSym : int {
 };
 uintptr_t addr_of_data(DataSym d);
 
+// The three SDL_DYNAPI jump-table slots the overlay reads and writes. Not in
+// the generated tables: no byte pattern can find a slot or a thunk (every thunk
+// is `48 FF 25 disp32`, every default stub shares a shape), so each is reached
+// from a unique GAME call site instead -- call rel32 -> the thunk -> its own
+// jmp operand -> the slot. Absolute address, or 0 when it did not resolve; a
+// wrong slot would be written over some other SDL function, so 0 is the only
+// safe answer to doubt.
+enum SdlSlot : int {
+    S_GLSwapWindow = 0,
+    S_GetWindowSize,
+    S_GetWindowSizeInPixels,
+    S_COUNT
+};
+uintptr_t addr_of_sdl_slot(SdlSlot s);
+
 // True when every address came from its pinned RVA -- i.e. this is the build
 // the signatures were generated from. False means the game moved and we
 // followed it; the log says by how much.

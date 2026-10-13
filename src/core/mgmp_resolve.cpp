@@ -5,6 +5,8 @@
 #include "mgmp_sigscan.h"
 #include "mgmp_sigs.generated.h"
 
+#include <windows.h>
+#include <cstdio>
 #include <cstring>
 
 namespace mgmp {
@@ -40,6 +42,74 @@ bool is_critical(Target t) {
     }
 }
 
+// --- the SDL_DYNAPI slots ---------------------------------------------------
+//
+// Each from one game call site, read off the pinned build (4127cd6a):
+//   SDL_GL_SwapWindow          the present, 0x1409B8018: `mov rcx,[rsi+0DD0h];
+//                              test rcx,rcx; jz; call SDL_GL_SwapWindow; call ..`
+//   SDL_GetWindowSize          0x140A5C463, with the flags query after it
+//   SDL_GetWindowSizeInPixels  0x1409B71DD, ApplicationBase's size refresh
+// Each pattern is unique in .text with the call rel32s wildcarded and the
+// struct displacements kept, as gen_sigs.py would.
+struct SdlSlotDesc {
+    const char* name;
+    uint32_t    site_hint;   // rva of the pattern's start on the pinned build
+    const char* pattern;
+    uint16_t    call_off;    // offset of the E8 within the pattern
+    uint32_t    slot_hint;   // kRva_* -- the cross-check, logged on drift
+};
+const SdlSlotDesc kSdlSlots[S_COUNT] = {
+    { "SDL_GL_SwapWindow slot", 0x009B8018,
+      "48 8B 8E D0 0D 00 00 48 85 C9 74 05 E8 ? ? ? ? E8", 12, kRva_SdlSwapSlot },
+    { "SDL_GetWindowSize slot", 0x00A5C463,
+      "48 8B 0F 4C 8D 84 24 90 00 00 00 48 8D 94 24 98 00 00 00 E8 ? ? ? ? 48 8B 0F E8 ? ? ? ? A8 40",
+      19, kRva_SdlGetWindowSizeSlot },
+    { "SDL_GetWindowSizeInPixels slot", 0x009B71DD,
+      "4C 8D 44 24 34 48 8B 89 D0 0D 00 00 48 8D 54 24 30 33 FF 48 89 7C 24 30 E8",
+      24, kRva_SdlGetWindowSizePxSlot },
+};
+uintptr_t g_sdl[S_COUNT];
+
+// Reads a rel32 and the bytes around it through mem_read-free plain loads: the
+// image is mapped and these are inside .text, already bounds-checked.
+uintptr_t sdl_slot_from(uintptr_t module_base, const SigRegion& text, const SdlSlotDesc& d,
+                        char* why, size_t why_size) {
+    SigTargetDesc t{ d.site_hint, d.name, d.pattern };
+    const SigResolution r = sig_resolve(module_base, text, t);
+    if (!r.ok) { _snprintf_s(why, why_size, _TRUNCATE, "%s", r.why); return 0; }
+    const uintptr_t lo = (uintptr_t)text.base, hi = lo + text.size;
+    const uintptr_t call = r.addr + d.call_off;
+    if (call + 5 > hi || *(const uint8_t*)call != 0xE8) {
+        _snprintf_s(why, why_size, _TRUNCATE, "the call site is not a call");
+        return 0;
+    }
+    int32_t rel = 0;
+    memcpy(&rel, (const void*)(call + 1), 4);
+    const uintptr_t thunk = call + 5 + (intptr_t)rel;
+    const uint8_t* tb = (const uint8_t*)thunk;
+    if (thunk < lo || thunk + 7 > hi || tb[0] != 0x48 || tb[1] != 0xFF || tb[2] != 0x25) {
+        _snprintf_s(why, why_size, _TRUNCATE, "the call does not land on a `jmp [rip+x]` thunk");
+        return 0;
+    }
+    int32_t disp = 0;
+    memcpy(&disp, tb + 3, 4);
+    const uintptr_t slot = thunk + 7 + (intptr_t)disp;
+    // The slot must be inside the image, and outside .text.
+    const IMAGE_DOS_HEADER* dos = (const IMAGE_DOS_HEADER*)module_base;
+    const IMAGE_NT_HEADERS64* nt = (const IMAGE_NT_HEADERS64*)(module_base + dos->e_lfanew);
+    const uintptr_t img_hi = module_base + nt->OptionalHeader.SizeOfImage;
+    if (slot < module_base || slot + 8 > img_hi || (slot >= lo && slot < hi)) {
+        _snprintf_s(why, why_size, _TRUNCATE, "the thunk's slot is outside the image's data");
+        return 0;
+    }
+    if (slot - module_base != d.slot_hint)
+        _snprintf_s(why, why_size, _TRUNCATE, "MOVED %08X -> %08X",
+                    d.slot_hint, (unsigned)(slot - module_base));
+    else
+        why[0] = 0;
+    return slot;
+}
+
 uintptr_t g_target[T_COUNT];
 uintptr_t g_call  [C_COUNT];
 uintptr_t g_data  [D_COUNT];
@@ -65,6 +135,7 @@ bool resolve_init(uintptr_t module_base) {
     memset(g_target, 0, sizeof(g_target));
     memset(g_call,   0, sizeof(g_call));
     memset(g_data,   0, sizeof(g_data));
+    memset(g_sdl,    0, sizeof(g_sdl));
     g_resolved = g_moved = g_failed = 0;
     g_pinned   = true;
     g_ready    = false;
@@ -124,6 +195,21 @@ bool resolve_init(uintptr_t module_base) {
         }
     }
 
+    for (int i = 0; i < S_COUNT; ++i) {
+        char why[128] = {0};
+        g_sdl[i] = sdl_slot_from(module_base, text, kSdlSlots[i], why, sizeof(why));
+        if (!g_sdl[i]) {
+            log_raw("  [!] data   %-34s UNRESOLVED: %s", kSdlSlots[i].name, why);
+            ++g_failed;
+        } else {
+            ++g_resolved;
+            if (why[0]) {
+                log_raw("  [~] data   %-34s %s", kSdlSlots[i].name, why);
+                ++g_moved; g_pinned = false;
+            }
+        }
+    }
+
     g_ready = true;
 
     if (g_pinned && !g_failed) {
@@ -155,6 +241,11 @@ uintptr_t addr_of_call(Call c) {
 uintptr_t addr_of_data(DataSym d) {
     if (!g_ready || d < 0 || d >= D_COUNT) return 0;
     return g_data[d];
+}
+
+uintptr_t addr_of_sdl_slot(SdlSlot s) {
+    if (!g_ready || s < 0 || s >= S_COUNT) return 0;
+    return g_sdl[s];
 }
 
 bool resolve_is_pinned_build() { return g_pinned; }
